@@ -2,7 +2,13 @@
 
 import { Link } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { Modal } from "@/components/ui/modal";
 import CalibrationForm from "@/components/calibration/CalibrationForm";
 import {
@@ -60,9 +66,12 @@ export default function CalibrationStatus() {
   const [engines, setEngines] = useState<EquipmentRecord[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [isStatusFilterOpen, setIsStatusFilterOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const statusFilterDropdownRef = useRef<HTMLDivElement>(null);
+  const statusFilterTriggerRef = useRef<HTMLButtonElement>(null);
   const [calibrationEngineCode, setCalibrationEngineCode] = useState<string | null>(
     null,
   );
@@ -106,6 +115,46 @@ export default function CalibrationStatus() {
     };
   }, [t]);
 
+  useEffect(() => {
+    if (!isStatusFilterOpen) return;
+
+    const closeOnOutsideInteraction = (event: Event) => {
+      if (
+        event.target instanceof Node &&
+        !statusFilterDropdownRef.current?.contains(event.target)
+      ) {
+        setIsStatusFilterOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsStatusFilterOpen(false);
+        statusFilterTriggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsideInteraction);
+    document.addEventListener("focusin", closeOnOutsideInteraction);
+    document.addEventListener("keydown", closeOnEscape);
+    const selectedOption =
+      statusFilterDropdownRef.current?.querySelector<HTMLButtonElement>(
+        '[data-selected-option="true"]',
+      );
+    const firstOption =
+      statusFilterDropdownRef.current?.querySelector<HTMLButtonElement>(
+        "[data-status-option]",
+      );
+    (selectedOption ?? firstOption)?.focus();
+
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideInteraction);
+      document.removeEventListener("focusin", closeOnOutsideInteraction);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isStatusFilterOpen]);
+
   const filteredEngines = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
 
@@ -133,6 +182,39 @@ export default function CalibrationStatus() {
     (currentPage - 1) * PAGE_SIZE,
     currentPage * PAGE_SIZE,
   );
+  const statusFilterOptions: { value: StatusFilter; label: string }[] = [
+    { value: "all", label: `${t("allStatuses")} (${engines.length})` },
+    { value: "calibrated", label: `${t("calibrated")} (${calibratedCount})` },
+    {
+      value: "not-calibrated",
+      label: `${t("notCalibrated")} (${notCalibratedCount})`,
+    },
+  ];
+  const handleStatusFilterOptionKeyDown = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+  ) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+
+    const options = Array.from(
+      statusFilterDropdownRef.current?.querySelectorAll<HTMLButtonElement>(
+        "[data-status-option]",
+      ) ?? [],
+    );
+    if (options.length === 0) return;
+
+    const currentIndex = options.indexOf(event.currentTarget);
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? options.length - 1
+          : (currentIndex +
+              (event.key === "ArrowDown" ? 1 : -1) +
+              options.length) %
+            options.length;
+    options[nextIndex]?.focus();
+  };
 
   return (
     <div className="w-full">
@@ -163,36 +245,75 @@ export default function CalibrationStatus() {
           <SlidersHorizontal size={18} aria-hidden="true" />
         </span>
         <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-4">
-          <label className="block min-w-0 flex-1 sm:max-w-sm">
+          <div className="block min-w-0 flex-1 sm:max-w-sm">
             <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
               {t("filterStatus")}
             </span>
-            <span className="relative block">
-              <select
-                value={statusFilter}
-                onChange={(event) => {
-                  setStatusFilter(event.target.value as StatusFilter)
-                  setCurrentPage(1);
+            <div className="relative block" ref={statusFilterDropdownRef}>
+              <button
+                ref={statusFilterTriggerRef}
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={isStatusFilterOpen}
+                aria-controls="calibration-status-filter-options"
+                aria-label={`${t("filterStatus")}: ${statusFilterOptions.find((option) => option.value === statusFilter)?.label ?? ""}`}
+                onClick={() => setIsStatusFilterOpen((isOpen) => !isOpen)}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setIsStatusFilterOpen(true);
+                  }
                 }}
-                className="h-10 w-full appearance-none rounded-xl border border-gray-200 bg-gray-50 ps-3 pe-10 text-sm font-semibold text-gray-800 outline-none transition hover:border-success-300 hover:bg-white focus:border-success-500 focus:bg-white focus:ring-3 focus:ring-success-500/10 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-success-700 dark:hover:bg-gray-900 dark:focus:bg-gray-900"
+                className="flex h-10 w-full items-center justify-between rounded-xl border border-success-600 bg-white ps-3 pe-3 text-start text-sm font-semibold text-gray-800 outline-none transition hover:border-success-600 focus:ring-2 focus:ring-success-500/20 dark:bg-gray-900 dark:text-gray-100"
               >
-                <option value="all">
-                  {t("allStatuses")} ({engines.length})
-                </option>
-                <option value="calibrated">
-                  {t("calibrated")} ({calibratedCount})
-                </option>
-                <option value="not-calibrated">
-                  {t("notCalibrated")} ({notCalibratedCount})
-                </option>
-              </select>
-              <ChevronDown
-                size={16}
-                aria-hidden="true"
-                className="pointer-events-none absolute end-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400"
-              />
-            </span>
-          </label>
+                <span>
+                  {statusFilterOptions.find((option) => option.value === statusFilter)?.label}
+                </span>
+                <ChevronDown
+                  size={16}
+                  aria-hidden="true"
+                  className="shrink-0 text-gray-500 dark:text-gray-400"
+                />
+              </button>
+              {isStatusFilterOpen && (
+                <div
+                  id="calibration-status-filter-options"
+                  role="listbox"
+                  aria-label={t("filterStatus")}
+                  className="absolute start-0 top-full z-[60] mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-success-600 bg-white py-1 shadow-theme-lg dark:bg-gray-900"
+                >
+                  {statusFilterOptions.map((option) => {
+                    const isSelected = option.value === statusFilter;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        tabIndex={isSelected ? 0 : -1}
+                        data-status-option
+                        data-selected-option={isSelected}
+                        onClick={() => {
+                          setStatusFilter(option.value);
+                          setCurrentPage(1);
+                          setIsStatusFilterOpen(false);
+                          statusFilterTriggerRef.current?.focus();
+                        }}
+                        onKeyDown={handleStatusFilterOptionKeyDown}
+                        className={`w-full px-3 py-2 text-start text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-success-600 ${
+                          isSelected
+                            ? "bg-white font-semibold text-success-700 dark:bg-gray-900 dark:text-success-400"
+                            : "bg-white text-gray-700 hover:bg-success-50 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
           <output
             aria-label={t("filterStatus")}
             className="inline-flex h-9 items-center rounded-full border border-gray-200 bg-gray-50 px-3 text-xs font-semibold tabular-nums text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
@@ -208,9 +329,6 @@ export default function CalibrationStatus() {
             <h2 className="text-base font-semibold text-gray-800 dark:text-white">
               {t("engineCalibrationStatus")}
             </h2>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              {t("calibrationStatusSource")}
-            </p>
           </div>
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
             <label className="relative block sm:w-64">

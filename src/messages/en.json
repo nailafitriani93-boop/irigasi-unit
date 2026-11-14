@@ -930,7 +930,6 @@
         "recordUpdated": "Data {code} berhasil diperbarui.",
         "takeCalibrationAction": "Ambil tindakan kalibrasi",
         "engineCalibrationStatus": "Status Kalibrasi per Engine",
-        "calibrationStatusSource": "Daftar dan status awal mengacu pada sheet KalibrasiEngine; input baru memperbarui status kalibrasi.",
         "searchEngine": "Cari kode engine atau area",
         "filterStatus": "Filter status",
         "allStatuses": "Semua status",

@@ -20,7 +20,7 @@ export default function DashboardSectionNav() {
   return (
     <nav
       aria-label="Navigasi bagian dashboard"
-      className="sticky top-2 z-20 flex h-fit w-fit flex-row gap-1 rounded-xl border border-[#dce9df] bg-white/95 p-1.5 shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/95 md:top-24"
+      className="flex h-fit w-fit shrink-0 flex-row gap-1 rounded-lg bg-gray-50 p-1 dark:bg-gray-800"
     >
       {sections.map(({ id, label, Icon }) => (
         <button
@@ -29,7 +29,7 @@ export default function DashboardSectionNav() {
           aria-label={`Ke bagian ${label}`}
           title={label}
           onClick={() => scrollToSection(id)}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#365343] transition-colors hover:bg-[#edf5ef] hover:text-[#08783b] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050] dark:text-gray-200 dark:hover:bg-gray-800"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#365343] transition-colors hover:bg-[#edf5ef] hover:text-[#08783b] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050] dark:text-gray-200 dark:hover:bg-gray-700"
         >
           <Icon size={19} aria-hidden="true" />
         </button>

@@ -6,11 +6,13 @@ import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } fro
 import {
   BarChart3,
   Cable,
+  ChevronDown,
   ClipboardCheck,
   Cog,
   Droplets,
 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
+import DashboardSectionNav from "@/components/dashboard/DashboardSectionNav";
 import { AREA_SCOPES, type AreaScope } from "@/data/userData";
 import summaryData from "@/data/irrigationSummary.json";
 import { Link } from "@/i18n/navigation";
@@ -2377,7 +2379,10 @@ export default function DashboardPage() {
   const [datasetYears, setDatasetYears] = useState<number[]>([]);
   const [activeDatasetYear, setActiveDatasetYear] = useState<number | null>(null);
   const [selectedDatasetYear, setSelectedDatasetYear] = useState<number | null>(null);
+  const [isDatasetYearDropdownOpen, setIsDatasetYearDropdownOpen] = useState(false);
   const [masterDataRefreshKey, setMasterDataRefreshKey] = useState(0);
+  const datasetYearDropdownRef = useRef<HTMLDivElement>(null);
+  const datasetYearTriggerRef = useRef<HTMLButtonElement>(null);
   const activeDatasetYearRef = useRef<number | null>(null);
   const datasetFingerprintRef = useRef("");
   const datasetMetadataInitialized = useRef(false);
@@ -2391,6 +2396,72 @@ export default function DashboardPage() {
     activeDatasetYear !== null &&
     selectedDatasetYear !== null &&
     activeDatasetYear !== selectedDatasetYear;
+
+  useEffect(() => {
+    if (!isDatasetYearDropdownOpen) return;
+
+    const closeOnOutsideInteraction = (event: Event) => {
+      if (
+        event.target instanceof Node &&
+        !datasetYearDropdownRef.current?.contains(event.target)
+      ) {
+        setIsDatasetYearDropdownOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsDatasetYearDropdownOpen(false);
+        datasetYearTriggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsideInteraction);
+    document.addEventListener("focusin", closeOnOutsideInteraction);
+    document.addEventListener("keydown", closeOnEscape);
+    const selectedOption =
+      datasetYearDropdownRef.current?.querySelector<HTMLButtonElement>(
+        '[data-selected-year="true"]',
+      );
+    const firstOption =
+      datasetYearDropdownRef.current?.querySelector<HTMLButtonElement>(
+        "[data-year-option]",
+      );
+    (selectedOption ?? firstOption)?.focus();
+
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideInteraction);
+      document.removeEventListener("focusin", closeOnOutsideInteraction);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isDatasetYearDropdownOpen]);
+
+  const handleDatasetYearOptionKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+  ) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+
+    const options = Array.from(
+      datasetYearDropdownRef.current?.querySelectorAll<HTMLButtonElement>(
+        "[data-year-option]",
+      ) ?? [],
+    );
+    if (options.length === 0) return;
+
+    const currentIndex = options.indexOf(event.currentTarget);
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? options.length - 1
+          : (currentIndex +
+              (event.key === "ArrowDown" ? 1 : -1) +
+              options.length) %
+            options.length;
+    options[nextIndex]?.focus();
+  };
 
   const refreshMasterDataMetadata = useCallback(async () => {
     try {
@@ -3086,40 +3157,94 @@ export default function DashboardPage() {
 
   return (
     <div className="mx-auto w-full max-w-[1800px]">
-      {datasetYears.length > 0 && (
-        <div className="sticky top-[76px] z-50 mb-5 flex flex-wrap items-end justify-between gap-4 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-theme-sm dark:border-gray-800 dark:bg-gray-900">
-          <label className="block min-w-48 text-sm font-medium text-gray-700 dark:text-gray-300">
-            {masterDataT("selectDashboardYear")}
-            <select
-              value={selectedDatasetYear ?? ""}
-              onChange={(event) =>
-                setSelectedDatasetYear(
-                  event.target.value ? Number(event.target.value) : null,
-                )
-              }
-              className="mt-1.5 h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+      <div className="sticky top-[76px] z-50 mb-5 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-theme-sm dark:border-gray-800 dark:bg-gray-900">
+        <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+          {datasetYears.length > 0 && (
+            <div
+              ref={datasetYearDropdownRef}
+              className="relative min-w-48 text-sm font-medium text-gray-700 dark:text-gray-300"
             >
-              {datasetYears.map((year) => (
-                <option key={year} value={year}>
-                  {year}
-                  {year === activeDatasetYear
-                    ? ` — ${masterDataT("activeDashboardData")}`
-                    : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          {isHistoricalDataset ? (
+              <span id="dashboard-year-filter-label">
+                {masterDataT("selectDashboardYear")}
+              </span>
+              <button
+                ref={datasetYearTriggerRef}
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={isDatasetYearDropdownOpen}
+                aria-controls="dashboard-year-options"
+                aria-labelledby="dashboard-year-filter-label dashboard-year-filter-value"
+                onClick={() =>
+                  setIsDatasetYearDropdownOpen((isOpen) => !isOpen)
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setIsDatasetYearDropdownOpen(true);
+                  }
+                }}
+                className="mt-1.5 flex h-10 w-full items-center justify-between rounded-lg border border-success-600 bg-white px-3 text-start text-sm font-normal text-gray-900 outline-none focus:ring-2 focus:ring-success-500/20 dark:bg-gray-800 dark:text-white"
+              >
+                <span id="dashboard-year-filter-value">
+                  {selectedDatasetYear !== null && (
+                    <>
+                      {selectedDatasetYear}
+                      {selectedDatasetYear === activeDatasetYear
+                        ? ` — ${masterDataT("activeDashboardData")}`
+                        : ""}
+                    </>
+                  )}
+                </span>
+                <ChevronDown size={16} aria-hidden="true" />
+              </button>
+              {isDatasetYearDropdownOpen && (
+                <div
+                  id="dashboard-year-options"
+                  role="listbox"
+                  aria-labelledby="dashboard-year-filter-label"
+                  className="absolute start-0 top-full z-[60] mt-1 max-h-60 w-full overflow-y-auto rounded-lg border border-success-600 bg-white py-1 shadow-theme-lg dark:bg-gray-900"
+                >
+                  {datasetYears.map((year) => (
+                    <button
+                      key={year}
+                      type="button"
+                      role="option"
+                      aria-selected={year === selectedDatasetYear}
+                      tabIndex={
+                        year === (selectedDatasetYear ?? datasetYears[0]) ? 0 : -1
+                      }
+                      data-year-option
+                      data-selected-year={year === selectedDatasetYear}
+                      onClick={() => {
+                        setSelectedDatasetYear(year);
+                        setIsDatasetYearDropdownOpen(false);
+                        datasetYearTriggerRef.current?.focus();
+                      }}
+                      onKeyDown={handleDatasetYearOptionKeyDown}
+                      className={`flex w-full items-center px-3 py-2 text-start text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-success-600 ${
+                        year === selectedDatasetYear
+                          ? "bg-white font-semibold text-success-700 dark:bg-gray-900 dark:text-success-400"
+                          : "bg-white text-gray-700 hover:bg-success-50 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+                      }`}
+                    >
+                      {year}
+                      {year === activeDatasetYear
+                        ? ` — ${masterDataT("activeDashboardData")}`
+                        : ""}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {isHistoricalDataset && (
             <p className="text-sm font-medium text-warning-700 dark:text-warning-400">
               {masterDataT("historicalReadOnly")}
             </p>
-          ) : activeDatasetYear !== null ? (
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {masterDataT("activeYearLabel")}: {activeDatasetYear}
-            </p>
-          ) : null}
+          )}
         </div>
-      )}
+        <DashboardSectionNav />
+      </div>
       {restrictedAccessNotice && (
         <div className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/40 p-4">
           <div
