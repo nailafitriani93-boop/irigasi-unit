@@ -3158,6 +3158,7 @@ export default function DashboardPage() {
   return (
     <div className="mx-auto w-full max-w-[1800px]">
       <div className="sticky top-[76px] z-50 mb-5 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-theme-sm dark:border-gray-800 dark:bg-gray-900">
+        <DashboardSectionNav />
         <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
           {datasetYears.length > 0 && (
             <div
@@ -3243,7 +3244,6 @@ export default function DashboardPage() {
             </p>
           )}
         </div>
-        <DashboardSectionNav />
       </div>
       {restrictedAccessNotice && (
         <div className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/40 p-4">
