@@ -12,6 +12,10 @@ const VALID_AREA_SCOPES: AreaScope[] = [
 const USERNAME_AREA_SCOPES: Record<string, AreaScope> = {
   "100001": "PG1",
   "100002": "PG1",
+  "11101": "PG1",
+  "11102": "Lakop",
+  "11103": "Kijung",
+  "11104": "Divisi 2",
   "11112": "PG1",
   "11113": "Kijung",
   "11114": "Lakop",

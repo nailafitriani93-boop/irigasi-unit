@@ -8,10 +8,10 @@ loadEnvConfig(process.cwd());
 
 const scrypt = promisify(scryptCallback);
 const areaUsers = [
-  { id: "user-area-11112", username: "11112", area: "PG1" },
-  { id: "user-area-11113", username: "11113", area: "Kijung" },
-  { id: "user-area-11114", username: "11114", area: "Lakop" },
-  { id: "user-area-11115", username: "11115", area: "Divisi 2" },
+  { id: "user-area-11101", username: "11101", area: "PG1" },
+  { id: "user-area-11102", username: "11102", area: "Lakop" },
+  { id: "user-area-11103", username: "11103", area: "Kijung" },
+  { id: "user-area-11104", username: "11104", area: "Divisi 2" },
 ];
 
 async function readHidden(prompt) {
@@ -151,7 +151,7 @@ try {
     }
 
     await client.query("COMMIT");
-    console.log("Akun area 11112–11115 berhasil dibuat atau diperbarui.");
+    console.log("Akun area 11101–11104 berhasil dibuat atau diperbarui.");
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
