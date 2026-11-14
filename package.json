@@ -7,7 +7,9 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
-    "setup:initial-users": "node scripts/bootstrap-user-accounts.mjs"
+    "setup:initial-users": "node scripts/bootstrap-user-accounts.mjs",
+    "setup:area-users": "node scripts/bootstrap-area-user-accounts.mjs",
+    "setup:admin-user": "node scripts/configure-admin-user.mjs"
   },
   "dependencies": {
     "@fullcalendar/react": "^7.1.0",

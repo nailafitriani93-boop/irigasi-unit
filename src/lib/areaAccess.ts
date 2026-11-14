@@ -9,35 +9,53 @@ const VALID_AREA_SCOPES: AreaScope[] = [
   "Divisi 2",
 ];
 
+const USERNAME_AREA_SCOPES: Record<string, AreaScope> = {
+  "100001": "PG1",
+  "100002": "PG1",
+  "11112": "PG1",
+  "11113": "Kijung",
+  "11114": "Lakop",
+  "11115": "Divisi 2",
+};
+
+export function getAreaScopeForUsername(
+  username: unknown,
+): AreaScope | null {
+  if (typeof username !== "string") return null;
+
+  return USERNAME_AREA_SCOPES[username.trim().toLowerCase()] ?? null;
+}
+
+export function getDisplayNameForUsername(
+  username: unknown,
+): string | null {
+  if (typeof username !== "string") return null;
+
+  const normalizedUsername = username.trim().toLowerCase();
+  if (normalizedUsername === "100001") return "Admin";
+
+  return getAreaScopeForUsername(normalizedUsername);
+}
+
 export async function getAuthenticatedAreaScope() {
   const session = await getAuthSession();
   if (!session) return null;
 
   const result = await db.query<{
-    area_scope: string | null;
-    role_id: string;
-    role_name: string | null;
+    username: string;
   }>(
-    `SELECT u.area_scope, u.role_id, r.name AS role_name
+    `SELECT u.username
      FROM public.managed_users u
-     LEFT JOIN public.user_roles r ON r.id = u.role_id
      WHERE u.id = $1 AND u.status = 'Aktif'
      LIMIT 1`,
     [session.userId],
   );
   if (!result.rows.length) return null;
 
-  const user = result.rows[0];
-  const isAdmin =
-    user.role_id.toLowerCase() === "admin" ||
-    user.role_name?.trim().toLowerCase() === "admin";
-  const areaScope = isAdmin ? "PG1" : user.area_scope;
+  const areaScope = getAreaScopeForUsername(result.rows[0].username);
+  if (!areaScope) return null;
 
-  if (!VALID_AREA_SCOPES.includes(areaScope as AreaScope)) {
-    throw new Error("Cakupan area user tidak valid.");
-  }
-
-  return { session, areaScope: areaScope as AreaScope };
+  return { session, areaScope };
 }
 
 export function isAreaScope(value: unknown): value is AreaScope {

@@ -11,8 +11,10 @@ import {
   Droplets,
 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
-import DashboardSectionNav from "@/components/dashboard/DashboardSectionNav";
 import { AREA_SCOPES, type AreaScope } from "@/data/userData";
+import summaryData from "@/data/irrigationSummary.json";
+import { Link } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 
 const ReactApexChart = dynamic(() => import("react-apexcharts"), {
   ssr: false,
@@ -161,6 +163,7 @@ async function requestEquipmentApi(method: "POST" | "PUT" | "DELETE", body: unkn
     throw new Error(result.error ?? "Gagal menyimpan data aset ke database.");
   }
 
+  window.dispatchEvent(new Event("ggf-equipment-updated"));
   return result;
 }
 
@@ -224,20 +227,7 @@ function calibrationRows(
     const area = String(row[0]);
     if (isRestrictedArea(area, scopeArea, false)) return row;
 
-    const matchingRecords = records.filter(
-      (record) =>
-        record.type === "Engine" &&
-        record.status.toLowerCase() === "ready" &&
-        (!group || getRecordGroup(record).toLowerCase() === group.toLowerCase()) &&
-        (area.toLowerCase() === "total" ||
-          record.area.toLowerCase() === area.toLowerCase())
-    );
-    const calibrated = matchingRecords.filter(
-      (record) => record.fields.Kalibrasi?.toLowerCase() === "sudah"
-    ).length;
-    const notCalibrated = matchingRecords.filter(
-      (record) => record.fields.Kalibrasi?.toLowerCase() === "belum"
-    ).length;
+    const [calibrated, notCalibrated] = calibrationValues(records, area, group);
     const calibrationTotal = calibrated + notCalibrated;
 
     return [
@@ -247,6 +237,28 @@ function calibrationRows(
       calibrationTotal ? calibrated / calibrationTotal : 0,
     ];
   });
+}
+
+function calibrationValues(
+  records: EquipmentRecord[],
+  area: string,
+  group?: string,
+): number[] {
+  const matchingRecords = records.filter(
+    (record) =>
+      record.type === "Engine" &&
+      record.status.toLowerCase() === "ready" &&
+      (!group || getRecordGroup(record).toLowerCase() === group.toLowerCase()) &&
+      (area.toLowerCase() === "total" ||
+        record.area.toLowerCase() === area.toLowerCase()),
+  );
+
+  return ["sudah", "belum"].map(
+    (status) =>
+      matchingRecords.filter(
+        (record) => record.fields.Kalibrasi?.toLowerCase() === status,
+      ).length,
+  );
 }
 
 const cell = (address: string): CellValue =>
@@ -335,6 +347,118 @@ function pipeRows(firstRow: number, lastRow: number, scopeArea?: AreaScope) {
     lastRow,
     ["C", "E", "F", "G", "I", "J", "K"],
     scopeArea,
+  );
+}
+
+function PipeStackedBarChart({
+  groups,
+  statuses,
+}: {
+  groups: { label: string; bars: { label: string; values: number[] }[] }[];
+  statuses: { label: string; color: string }[];
+}) {
+  const chartRef = useRef<HTMLDivElement>(null);
+  const [hasEnteredViewport, setHasEnteredViewport] = useState(false);
+  const maximum = Math.max(
+    1,
+    ...groups.flatMap((group) =>
+      group.bars.map((bar) =>
+        bar.values.reduce((sum, value) => sum + value, 0),
+      ),
+    ),
+  );
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    let animationFrame: number | undefined;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) {
+          if (animationFrame !== undefined) {
+            cancelAnimationFrame(animationFrame);
+          }
+          setHasEnteredViewport(false);
+          return;
+        }
+
+        setHasEnteredViewport(false);
+        animationFrame = requestAnimationFrame(() => {
+          setHasEnteredViewport(true);
+        });
+      },
+      { threshold: 0.15 },
+    );
+
+    observer.observe(chart);
+    return () => {
+      observer.disconnect();
+      if (animationFrame !== undefined) {
+        cancelAnimationFrame(animationFrame);
+      }
+    };
+  }, []);
+
+  return (
+    <div ref={chartRef} className="flex h-full flex-col justify-between gap-1 rounded-lg border border-[#e5ebe7] bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900">
+      {groups.map((group) => (
+        <section key={group.label}>
+          <h4 className="border-b border-[#e5ebe7] py-1 text-[10px] font-semibold text-gray-700 dark:border-gray-700 dark:text-gray-200">
+            {group.label}
+          </h4>
+          {group.bars.map((bar) => {
+            const total = bar.values.reduce((sum, value) => sum + value, 0);
+
+            return (
+              <div
+                key={`${group.label}-${bar.label}`}
+                className="grid min-h-6 grid-cols-[minmax(5rem,1fr)_minmax(0,2fr)_3.5rem] items-center gap-2 text-[10px]"
+                aria-label={`${group.label}, ${bar.label}: ${statuses.map((status, index) => `${status.label} ${bar.values[index]?.toLocaleString("id-ID") ?? "0"}`).join(", ")}, Total ${total.toLocaleString("id-ID")}`}
+              >
+                <span className="truncate ps-2 font-medium text-gray-600 dark:text-gray-300">
+                  {bar.label}
+                </span>
+                <div className="relative flex h-3 min-w-0 overflow-visible rounded bg-gray-100 dark:bg-gray-800">
+                  {statuses.map((status, index) => {
+                    const value = bar.values[index] ?? 0;
+                    if (!value) return null;
+
+                    return (
+                      <div
+                        key={status.label}
+                        title={`${status.label}: ${value.toLocaleString("id-ID")}`}
+                        data-tooltip={`${status.label}: ${value.toLocaleString("id-ID")}`}
+                        className="pipe-chart-bar-segment h-full"
+                        style={{
+                          backgroundColor: status.color,
+                          width: `${hasEnteredViewport ? (value / maximum) * 100 : 0}%`,
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+                <span className="text-end font-semibold tabular-nums text-gray-800 dark:text-gray-100">
+                  {total.toLocaleString("id-ID")}
+                </span>
+              </div>
+            );
+          })}
+        </section>
+      ))}
+      <div className="flex min-h-6 flex-wrap content-center gap-x-3 gap-y-1 border-t border-[#e5ebe7] pt-1.5 dark:border-gray-700">
+        {statuses.map((status) => (
+          <span key={status.label} className="inline-flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-300">
+            <span
+              aria-hidden="true"
+              className="h-2.5 w-2.5 rounded-sm"
+              style={{ backgroundColor: status.color }}
+            />
+            {status.label}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -440,8 +564,10 @@ function DataTable({
   rows,
   highlightLast = false,
   compact = false,
+  dense = false,
   readinessStyle = false,
   readinessLeftAligned = false,
+  readinessCentered = false,
   calibrationStyle = false,
   blueFirstColumn = false,
   greenHeader = false,
@@ -460,8 +586,10 @@ function DataTable({
   rows: CellValue[][];
   highlightLast?: boolean;
   compact?: boolean;
+  dense?: boolean;
   readinessStyle?: boolean;
   readinessLeftAligned?: boolean;
+  readinessCentered?: boolean;
   calibrationStyle?: boolean;
   blueFirstColumn?: boolean;
   greenHeader?: boolean;
@@ -477,8 +605,8 @@ function DataTable({
   onRestrictedClick?: () => void;
 }) {
   return (
-    <div className={`w-full ${readinessStyle ? "overflow-hidden" : "overflow-x-auto"} rounded-xl border border-[#e5ebe7]`}>
-      <table className={`w-full border-collapse text-left ${readinessStyle ? "table-fixed text-[10px]" : `${columnWidths ? "min-w-[560px] table-fixed" : "min-w-[470px]"} text-[12px] sm:text-[13px]`}`}>
+    <div className={`w-full ${readinessStyle ? "overflow-hidden" : "overflow-x-auto"} rounded-none border border-[#e5ebe7]`}>
+      <table className={`w-full border-collapse text-left ${readinessStyle ? "table-fixed text-[10px]" : dense ? "min-w-0 table-fixed text-[9px]" : `${columnWidths ? "min-w-[560px] table-fixed" : "min-w-[470px]"} text-[12px] sm:text-[13px]`}`}>
         {(readinessStyle || columnWidths) && (
           <colgroup>
             {headers.map((_, index) => (
@@ -500,7 +628,7 @@ function DataTable({
             {headers.map((header, index) => (
               <th
                 key={`${header}-${index}`}
-                className={`${readinessStyle ? "px-1 py-1.5 text-[8px] leading-tight tracking-normal" : compact ? "px-2.5 py-2.5" : "px-3 py-2.5"} ${readinessStyle ? "whitespace-nowrap" : wrapColumns.includes(index) ? "whitespace-normal" : "whitespace-nowrap"} ${wrapColumns.includes(index) ? "break-words" : ""} border-b font-semibold ${readinessStyle ? readinessLeftAligned || index === 0 ? "text-left" : "text-right" : leftAlignedColumns.includes(index) || index === 0 ? "text-left" : "text-right"} ${readinessStyle ? `border-gray-200 uppercase dark:border-gray-700 ${blueFirstColumn && index === 0 ? "!bg-blue-700 !text-white" : calibrationStyle ? calibrationHeaderStyle(header, index) : index ? readinessStatusStyle(header).header : ""}` : pipeHeader ? `border-white/20 ${pipeHeaderStyle(header)}` : greenHeader ? "border-white/20 text-white" : "border-[#dce9df]"}`}
+                className={`${readinessStyle ? "px-1 py-1.5 text-[8px] leading-tight tracking-normal" : dense ? "px-1 py-1" : compact ? "px-2.5 py-2.5" : "px-3 py-2.5"} ${readinessStyle ? readinessCentered ? "whitespace-normal break-words" : "whitespace-nowrap" : dense ? "whitespace-normal break-words" : wrapColumns.includes(index) ? "whitespace-normal" : "whitespace-nowrap"} ${wrapColumns.includes(index) || dense ? "break-words" : ""} border-b font-semibold ${calibrationStyle ? "text-center" : readinessStyle ? readinessCentered ? "text-center" : readinessLeftAligned || index === 0 ? "text-left" : "text-right" : pipeHeader ? "text-center" : leftAlignedColumns.includes(index) || index === 0 ? "text-left" : "text-right"} ${readinessStyle ? `border-gray-200 uppercase dark:border-gray-700 ${blueFirstColumn && index === 0 ? "!bg-blue-700 !text-white" : calibrationStyle ? calibrationHeaderStyle(header, index) : index ? readinessStatusStyle(header).header : ""}` : pipeHeader ? `border-white/20 ${pipeHeaderStyle(header)}` : greenHeader ? "border-white/20 text-white" : "border-[#dce9df]"}`}
               >
                 {greenHeader && index ? (
                   <span className="inline-flex items-center justify-end gap-1.5">
@@ -574,10 +702,10 @@ function DataTable({
                   <td
                     key={`${rowIndex}-${colIndex}`}
                     rowSpan={rowSpan}
-                    className={`${readinessStyle ? "px-1 py-1 text-[10px] leading-tight" : compact ? "px-2.5 py-2" : "px-3 py-2.5"} ${readinessStyle || wrapColumns.includes(colIndex) ? "whitespace-normal" : "whitespace-nowrap"} ${readinessStyle ? readinessLeftAligned || colIndex === 0 ? "text-left font-medium" : "text-right" : leftAlignedColumns.includes(colIndex) || colIndex === 0 ? "text-left font-medium" : "text-right"} ${colIndex ? "tabular-nums" : ""} ${readinessStyle ? "!bg-white !text-black dark:!bg-white dark:!text-black" : ""} ${isRestricted && colIndex > 0 ? "select-none blur-[5px]" : ""}`}
+                    className={`${readinessStyle ? "px-1 py-1 text-[10px] leading-tight" : dense ? "px-1 py-1" : compact ? "px-2.5 py-2" : "px-3 py-2.5"} ${readinessStyle || dense || wrapColumns.includes(colIndex) ? "whitespace-normal" : "whitespace-nowrap"} ${dense || wrapColumns.includes(colIndex) ? "break-words" : ""} ${calibrationStyle ? "text-center" : readinessStyle ? readinessCentered ? "text-center" : readinessLeftAligned || colIndex === 0 ? "text-left font-medium" : "text-right" : pipeHeader ? "text-center" : leftAlignedColumns.includes(colIndex) || colIndex === 0 ? "text-left font-medium" : "text-right"} ${readinessStyle && (readinessCentered || colIndex === 0) ? "font-medium" : ""} ${colIndex ? "tabular-nums" : ""} ${readinessStyle ? "!bg-white !text-black dark:!bg-white dark:!text-black" : ""} ${isRestricted && colIndex > 0 ? "select-none blur-[5px]" : ""}`}
                   >
                     {readinessStyle && colIndex === 0 ? (
-                      <span className={`inline-flex max-w-full items-center justify-start text-start break-words ${isTotal ? "font-semibold text-gray-800 dark:text-gray-100" : ""}`}>
+                      <span className={`inline-flex max-w-full items-center ${calibrationStyle || readinessCentered ? "justify-center text-center" : "justify-start text-start"} break-words ${isTotal ? "font-semibold text-gray-800 dark:text-gray-100" : ""}`}>
                         {formatValue(value)}
                       </span>
                     ) : null}
@@ -590,7 +718,7 @@ function DataTable({
                         type="button"
                         aria-label={`Lihat detail ${headers[colIndex]}: ${formatValue(value)}`}
                         title="Klik untuk melihat daftar aset"
-                        className={`inline-flex max-w-full items-center ${readinessStyle ? "justify-start" : "justify-center"} whitespace-nowrap font-bold tabular-nums focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-500 ${readinessStyle ? calibrationStyle ? "min-h-7 min-w-0 px-0.5 py-0.5 text-[11px] text-success-700 transition-colors hover:text-blue-700 hover:underline hover:underline-offset-2 dark:text-success-400 dark:hover:text-blue-300" : "min-h-7 min-w-0 px-0.5 py-0.5 text-[11px] text-success-700 transition-colors hover:text-success-900 hover:underline hover:underline-offset-2 dark:text-success-400 dark:hover:text-success-300" : "min-h-8 min-w-9 rounded-lg border border-[#dce9df] bg-white px-2.5 py-1.5 text-xs text-[#08783b] shadow-theme-xs transition-colors hover:border-[#9ec9aa] hover:bg-[#f2f8f3] hover:text-[#035c2a] dark:border-gray-600 dark:bg-gray-800 dark:text-green-400 dark:hover:bg-gray-700 dark:hover:text-green-300"}`}
+                        className={`inline-flex max-w-full items-center ${calibrationStyle ? "justify-center text-center" : readinessStyle && !readinessCentered ? "justify-start" : "justify-center"} whitespace-nowrap font-bold tabular-nums focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-500 ${readinessStyle ? calibrationStyle ? "min-h-7 min-w-0 px-0.5 py-0.5 text-[11px] text-success-700 transition-colors hover:text-blue-700 hover:underline hover:underline-offset-2 dark:text-success-400 dark:hover:text-blue-300" : "min-h-7 min-w-0 px-0.5 py-0.5 text-[11px] text-success-700 transition-colors hover:text-success-900 hover:underline hover:underline-offset-2 dark:text-success-400 dark:hover:text-success-300" : "min-h-8 min-w-9 rounded-lg border border-[#dce9df] bg-white px-2.5 py-1.5 text-xs text-[#08783b] shadow-theme-xs transition-colors hover:border-[#9ec9aa] hover:bg-[#f2f8f3] hover:text-[#035c2a] dark:border-gray-600 dark:bg-gray-800 dark:text-green-400 dark:hover:bg-gray-700 dark:hover:text-green-300"}`}
                         onClick={() => onValueClick(row, headers[colIndex], headers)}
                       >
                         {formatValue(value)}
@@ -632,7 +760,7 @@ function Panel({
   className?: string;
 }) {
   return (
-    <section id={id} className={`scroll-mt-24 flex h-full min-w-0 flex-col rounded-2xl border border-[#e1eae3] bg-white p-4 shadow-[0_4px_18px_rgba(25,55,38,0.06)] transition-shadow duration-200 hover:shadow-[0_8px_24px_rgba(25,55,38,0.09)] sm:p-5 ${className}`}>
+    <section id={id} className={`scroll-mt-40 flex h-full min-w-0 flex-col rounded-2xl border border-[#e1eae3] bg-white p-4 shadow-[0_4px_18px_rgba(25,55,38,0.06)] transition-shadow duration-200 hover:shadow-[0_8px_24px_rgba(25,55,38,0.09)] sm:p-5 ${className}`}>
       <div className="mb-4 flex min-h-10 flex-wrap items-center justify-between gap-2 border-b border-[#edf1ee] pb-3">
         {titleAdornment ? (
           <div className="flex min-w-0 items-center gap-3">
@@ -800,9 +928,25 @@ function BarChartView({
       itemMargin: { horizontal: 9, vertical: 3 },
     },
     fill: { opacity: 1 },
+    states: {
+      hover: {
+        filter: {
+          type: "darken",
+          value: 0.12,
+        },
+      },
+    },
     tooltip: {
+      theme: "light",
       shared: false,
       intersect: true,
+      marker: {
+        show: true,
+      },
+      style: {
+        fontSize: "11px",
+        fontFamily: "Outfit, sans-serif",
+      },
       y: {
         formatter: (value) => Number(value).toLocaleString("id-ID"),
       },
@@ -928,7 +1072,7 @@ function SummaryReadinessChart({
                 <div className="relative flex h-full w-full items-end justify-center rounded-xl transition-colors duration-200 group-hover:bg-white/50 dark:group-hover:bg-gray-800/30">
                   <div className="flex h-full w-full max-w-24 items-end justify-center px-1">
                     <div
-                      className="readiness-bar-rise relative w-full max-w-12 transition-[filter] duration-200 group-hover:drop-shadow-[0_5px_8px_rgba(24,59,43,0.18)]"
+                      className="readiness-bar-rise relative w-full max-w-24 transition-[filter] duration-200 group-hover:drop-shadow-[0_5px_8px_rgba(24,59,43,0.18)]"
                       style={{
                         height: `${Math.min(100, (totals[categoryIndex] / scaleMax) * 100)}%`,
                       }}
@@ -1010,12 +1154,15 @@ function SummaryReadinessChart({
           </div>
         </div>
       </div>
-      <div className="mt-2 grid grid-cols-3 gap-x-3 ps-8 text-center text-[10px] font-semibold text-[#53665a] dark:text-gray-300">
-        {categories.map((category, index) => (
-          <span key={`${category}-label-${index}`} className="flex min-w-0 flex-col items-center truncate rounded-lg border border-[#e8eee9] bg-white/80 px-1.5 py-1.5 dark:border-gray-700 dark:bg-gray-800">
-            <span className="max-w-full truncate">{category}</span>
-          </span>
-        ))}
+      <div className="mt-2 grid grid-cols-[2rem_minmax(0,1fr)] gap-x-2 text-center text-[10px] font-semibold text-[#53665a] dark:text-gray-300">
+        <div aria-hidden="true" />
+        <div className="mx-auto grid w-full max-w-sm grid-cols-3 gap-2 px-1.5 sm:gap-4 sm:px-4">
+          {categories.map((category, index) => (
+            <span key={`${category}-label-${index}`} className="flex min-w-0 flex-col items-center truncate rounded-lg border border-[#e8eee9] bg-white/80 px-1.5 py-1.5 dark:border-gray-700 dark:bg-gray-800">
+              <span className="max-w-full truncate">{category}</span>
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1049,13 +1196,37 @@ function CalibrationPieChart({
   const total = values.reduce((sum, value) => sum + value, 0);
   const calibrationLabels = [textCell("C54"), textCell("D54")];
   const calibrationColors = ["#00B050", "#FF0000"];
+  const visibleSlices = values
+    .map((value, index) => ({
+      value,
+      index,
+      label: calibrationLabels[index],
+      color: calibrationColors[index],
+    }))
+    .filter((slice) => slice.value > 0);
+  const percentageFor = (value: number) =>
+    total
+      ? ((value / total) * 100).toLocaleString("id-ID", {
+          maximumFractionDigits: 0,
+        })
+      : "0";
   const options: ApexOptions = {
     chart: { type: "pie", fontFamily: "Outfit, sans-serif", toolbar: { show: false } },
-    labels: calibrationLabels,
-    colors: calibrationColors,
-    legend: { show: true, position: "bottom", fontSize: "11px" },
+    labels: visibleSlices.map((slice) => slice.label),
+    colors: visibleSlices.map((slice) => slice.color),
+    legend: {
+      show: visibleSlices.length > 0,
+      position: "bottom",
+      fontSize: "11px",
+      formatter: (seriesName, options) =>
+        `${seriesName} (${(visibleSlices[options?.seriesIndex ?? -1]?.value ?? 0).toLocaleString("id-ID")} unit · ${percentageFor(visibleSlices[options?.seriesIndex ?? -1]?.value ?? 0)}%)`,
+    },
     dataLabels: {
-      enabled: false,
+      enabled: true,
+      formatter: (percentage) =>
+        `${Number(percentage).toLocaleString("id-ID", {
+          maximumFractionDigits: 0,
+        })}%`,
       style: { fontSize: "12px", fontWeight: 600 },
     },
     stroke: { width: 2, colors: ["#ffffff"] },
@@ -1063,18 +1234,21 @@ function CalibrationPieChart({
       theme: "light",
       cssClass: "calibration-pie-tooltip",
       custom: ({ seriesIndex }) => {
-        const percentage = total
-          ? ((values[seriesIndex] / total) * 100).toLocaleString("id-ID", {
-              maximumFractionDigits: 0,
-            })
-          : "0";
-        return `<div class="calibration-pie-tooltip-card"><span class="calibration-pie-tooltip-marker calibration-pie-tooltip-marker-${seriesIndex}"></span><span class="calibration-pie-tooltip-content"><span class="calibration-pie-tooltip-label">${label}</span><span class="calibration-pie-tooltip-value"><span>${calibrationLabels[seriesIndex]}</span><span>${percentage}%</span></span></span></div>`;
+        const slice = visibleSlices[seriesIndex];
+        if (!slice) return "";
+        const percentage = percentageFor(slice.value);
+        return `<div class="calibration-pie-tooltip-card"><span class="calibration-pie-tooltip-marker calibration-pie-tooltip-marker-${slice.index}"></span><span class="calibration-pie-tooltip-content"><span class="calibration-pie-tooltip-label">${label}</span><span class="calibration-pie-tooltip-value"><span>${slice.label}</span><span>${slice.value.toLocaleString("id-ID")} unit · ${percentage}%</span></span></span></div>`;
       },
     },
   };
   return (
     <DeferredChart height={225}>
-      <ReactApexChart options={options} series={values} type="pie" height={225} />
+      <ReactApexChart
+        options={options}
+        series={visibleSlices.map((slice) => slice.value)}
+        type="pie"
+        height={225}
+      />
     </DeferredChart>
   );
 }
@@ -1088,6 +1262,7 @@ function ReadinessTable({
   equipmentType,
   equipmentRecords,
   areaScope,
+  canViewDetails,
   onRestrictedClick,
   onSaveRecord,
   onDeleteRecord,
@@ -1101,6 +1276,7 @@ function ReadinessTable({
   equipmentType: EquipmentType;
   equipmentRecords: EquipmentRecord[];
   areaScope?: AreaScope;
+  canViewDetails: boolean;
   onRestrictedClick: () => void;
   onSaveRecord: (record: EquipmentRecord, fields: Record<string, string>) => Promise<boolean>;
   onDeleteRecord: (record: EquipmentRecord) => Promise<boolean>;
@@ -1133,7 +1309,7 @@ function ReadinessTable({
       <DataTable
         compact
         readinessStyle
-        readinessLeftAligned
+        readinessCentered
         blueFirstColumn
         columnWidths={["22%", "18%", "22%", "21%", "17%"]}
         headers={[textCell(`${labelColumn}${firstRow - 1}`), ...columns.map((column) => textCell(`${column}${firstRow - 1}`))]}
@@ -1141,15 +1317,19 @@ function ReadinessTable({
         highlightLast
         restrictedAreas={restrictedAreasForScope(areaScope, false)}
         onRestrictedClick={onRestrictedClick}
-        onValueClick={(row, status) => setSelected({ area: String(row[0]), status })}
+        onValueClick={
+          canViewDetails
+            ? (row, status) => setSelected({ area: String(row[0]), status })
+            : undefined
+        }
       />
       <Modal
-        isOpen={selected !== null}
+        isOpen={canViewDetails && selected !== null}
         onClose={() => setSelected(null)}
         className="my-4 w-[calc(100%-1.5rem)] max-w-6xl overflow-hidden rounded-3xl border border-[#dce9df] shadow-2xl sm:my-6 sm:w-[calc(100%-3rem)]"
         showCloseButton={false}
       >
-        {selected && (
+        {canViewDetails && selected && (
           <div className="flex max-h-[90vh] flex-col bg-white dark:bg-gray-900">
             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[#e5ebe7] bg-gradient-to-r from-[#f0f8f2] to-white px-5 py-5 sm:px-7 dark:border-gray-700 dark:from-gray-800 dark:to-gray-900">
               <div className="flex min-w-0 items-center gap-3">
@@ -1211,6 +1391,7 @@ function ReadinessTable({
               onSaveRecord={onSaveRecord}
               onDeleteRecord={onDeleteRecord}
               onAddRecord={(fields) => onAddRecord(equipmentType, title, fields)}
+              hideAssetActions
             />
           </div>
         )}
@@ -1229,6 +1410,7 @@ function EquipmentDetailTable({
   onSaveRecord,
   onDeleteRecord,
   onAddRecord,
+  hideAssetActions = false,
   availableRecords = records,
   capabilityContext,
 }: {
@@ -1241,6 +1423,7 @@ function EquipmentDetailTable({
   onSaveRecord: (record: EquipmentRecord, fields: Record<string, string>) => Promise<boolean>;
   onDeleteRecord: (record: EquipmentRecord) => Promise<boolean>;
   onAddRecord?: (fields: Record<string, string>) => Promise<boolean>;
+  hideAssetActions?: boolean;
   availableRecords?: EquipmentRecord[];
   capabilityContext?: CapabilitySelection;
 }) {
@@ -1316,7 +1499,7 @@ function EquipmentDetailTable({
               className="h-10 w-64 max-w-full rounded-xl border border-[#dce5de] bg-[#fbfcfb] px-3 text-xs text-[#365343] outline-none transition focus:border-[#07813e] focus:ring-2 focus:ring-[#07813e]/15 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
             />
           </label>
-          {onAddRecord && (
+          {onAddRecord && !hideAssetActions && (
             <button
               type="button"
               onClick={() => {
@@ -1537,7 +1720,7 @@ function EquipmentDetailTable({
                           >
                             Edit
                           </button>
-                          <button
+                          {!hideAssetActions && <button
                             type="button"
                             onClick={async () => {
                               if (
@@ -1553,7 +1736,7 @@ function EquipmentDetailTable({
                             className="rounded-lg border border-error-200 px-2.5 py-1.5 font-semibold text-error-700 hover:bg-error-50 dark:border-error-800 dark:text-error-300 dark:hover:bg-error-900/30"
                           >
                             Hapus
-                          </button>
+                          </button>}
                         </div>
                       </td>
                     </tr>
@@ -1768,6 +1951,7 @@ function CalibrationDetailModal({
           group={selection.group ?? ""}
           onSaveRecord={onSaveRecord}
           onDeleteRecord={onDeleteRecord}
+          hideAssetActions
         />
       </div>
     </Modal>
@@ -1950,6 +2134,7 @@ function CapabilityDetailModal({
               fields
             )
           }
+          hideAssetActions
         />
       </div>
     </Modal>
@@ -1966,7 +2151,9 @@ function CapabilityTables({
   labelColumn,
   valueColumns,
   sideBySide = false,
+  centered = false,
   scopeArea,
+  canViewDetails,
   onRestrictedClick,
   onValueClick,
 }: {
@@ -1975,7 +2162,9 @@ function CapabilityTables({
   labelColumn: string;
   valueColumns: string[];
   sideBySide?: boolean;
+  centered?: boolean;
   scopeArea?: AreaScope;
+  canViewDetails: boolean;
   onRestrictedClick: () => void;
   onValueClick: (dimension: "area" | "group", category: string, grade: string) => void;
 }) {
@@ -1988,13 +2177,18 @@ function CapabilityTables({
         <DataTable
           compact
           readinessStyle
+          readinessCentered={centered}
           blueFirstColumn
           headers={[textCell(`${labelColumn}${areaFirst - 1}`), ...valueColumns.map((column) => textCell(`${column}${areaFirst - 1}`))]}
           rows={makeRows(labelColumn, areaFirst, areaLast, valueColumns, scopeArea)}
           highlightLast
           restrictedAreas={restrictedAreasForScope(scopeArea)}
           onRestrictedClick={onRestrictedClick}
-          onValueClick={(row, grade) => onValueClick("area", String(row[0]), grade)}
+          onValueClick={
+            canViewDetails
+              ? (row, grade) => onValueClick("area", String(row[0]), grade)
+              : undefined
+          }
         />
       </div>
       {!scopeArea && (
@@ -2003,10 +2197,15 @@ function CapabilityTables({
           <DataTable
             compact
             readinessStyle
+            readinessCentered={centered}
             blueFirstColumn
             headers={["Jenis", ...valueColumns.map((column) => textCell(`${column}${splitFirst - 1}`))]}
             rows={makeRows(labelColumn, splitFirst, splitLast, valueColumns)}
-            onValueClick={(row, grade) => onValueClick("group", String(row[0]), grade)}
+            onValueClick={
+              canViewDetails
+                ? (row, grade) => onValueClick("group", String(row[0]), grade)
+                : undefined
+            }
           />
         </div>
       )}
@@ -2015,21 +2214,124 @@ function CapabilityTables({
 }
 
 export default function DashboardPage() {
+  const t = useTranslations("calibration");
+  const masterDataT = useTranslations("masterData");
   const [equipmentRecords, setEquipmentRecords] = useState<EquipmentRecord[]>([]);
   const [equipmentStorageError, setEquipmentStorageError] = useState("");
   const [equipmentActionMessage, setEquipmentActionMessage] = useState("");
   const [restrictedAccessNotice, setRestrictedAccessNotice] = useState("");
   const restrictedAccessTimeout = useRef<number | null>(null);
   const [areaScope, setAreaScope] = useState<AreaScope | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [areaScopeError, setAreaScopeError] = useState("");
   const [summaryReady, setSummaryReady] = useState(false);
   const [summaryError, setSummaryError] = useState("");
+  const [datasetYears, setDatasetYears] = useState<number[]>([]);
+  const [activeDatasetYear, setActiveDatasetYear] = useState<number | null>(null);
+  const [selectedDatasetYear, setSelectedDatasetYear] = useState<number | null>(null);
+  const [masterDataRefreshKey, setMasterDataRefreshKey] = useState(0);
+  const activeDatasetYearRef = useRef<number | null>(null);
+  const datasetFingerprintRef = useRef("");
+  const datasetMetadataInitialized = useRef(false);
   const [capabilitySelection, setCapabilitySelection] =
     useState<CapabilitySelection | null>(null);
   const [pipeSelection, setPipeSelection] =
     useState<PipeValueSelection | null>(null);
   const [calibrationSelection, setCalibrationSelection] =
     useState<CalibrationSelection | null>(null);
+  const isHistoricalDataset =
+    activeDatasetYear !== null &&
+    selectedDatasetYear !== null &&
+    activeDatasetYear !== selectedDatasetYear;
+
+  const refreshMasterDataMetadata = useCallback(async () => {
+    try {
+      const response = await fetch("/api/master-data", { cache: "no-store" });
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        const message =
+          typeof result === "object" &&
+          result !== null &&
+          "error" in result &&
+          typeof result.error === "string"
+            ? result.error
+            : "Gagal memuat daftar tahun data master.";
+        throw new Error(message);
+      }
+      if (
+        typeof result !== "object" ||
+        result === null ||
+        !("activeYear" in result) ||
+        !("versions" in result) ||
+        (result.activeYear !== null && typeof result.activeYear !== "number") ||
+        !Array.isArray(result.versions) ||
+        !result.versions.every(
+          (version) =>
+            typeof version === "object" &&
+            version !== null &&
+            "dataset_year" in version &&
+            typeof version.dataset_year === "number" &&
+            "revision" in version &&
+            typeof version.revision === "number" &&
+            "is_active" in version &&
+            typeof version.is_active === "boolean",
+        )
+      ) {
+        throw new Error("Format daftar tahun data master tidak valid.");
+      }
+
+      const nextActiveYear = result.activeYear;
+      const nextYears = Array.from(
+        new Set(result.versions.map((version) => version.dataset_year)),
+      ).sort((left, right) => right - left);
+      const nextFingerprint = result.versions
+        .map((version) => `${version.dataset_year}:${version.revision}:${version.is_active}`)
+        .join("|");
+      const dataChanged =
+        datasetMetadataInitialized.current &&
+        datasetFingerprintRef.current !== nextFingerprint;
+      if (
+        dataChanged
+      ) {
+        setMasterDataRefreshKey((current) => current + 1);
+      }
+      setDatasetYears(nextYears);
+      setActiveDatasetYear(nextActiveYear);
+      if (
+        !datasetMetadataInitialized.current ||
+        activeDatasetYearRef.current !== nextActiveYear ||
+        dataChanged
+      ) {
+        setSelectedDatasetYear(nextActiveYear);
+      }
+      activeDatasetYearRef.current = nextActiveYear;
+      datasetFingerprintRef.current = nextFingerprint;
+      datasetMetadataInitialized.current = true;
+    } catch (error) {
+      console.error("Gagal memuat tahun data master:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshMasterDataMetadata();
+    window.addEventListener("focus", refreshMasterDataMetadata);
+    window.addEventListener(
+      "ggf-master-data-updated",
+      refreshMasterDataMetadata,
+    );
+    const refreshInterval = window.setInterval(
+      refreshMasterDataMetadata,
+      60_000,
+    );
+    return () => {
+      window.removeEventListener("focus", refreshMasterDataMetadata);
+      window.removeEventListener(
+        "ggf-master-data-updated",
+        refreshMasterDataMetadata,
+      );
+      window.clearInterval(refreshInterval);
+    };
+  }, [refreshMasterDataMetadata]);
 
   const showRestrictedAreaMessage = () => {
     setRestrictedAccessNotice("Anda tidak memiliki izin akses");
@@ -2062,19 +2364,29 @@ export default function DashboardPage() {
   useEffect(() => {
     let cancelled = false;
 
-    fetch("/api/auth/session", { cache: "no-store" })
-      .then(async (response) => {
+    const refreshAuthentication = async () => {
+      try {
+        const response = await fetch("/api/auth/session", {
+          cache: "no-store",
+        });
         if (!response.ok) {
           throw new Error("Gagal memeriksa cakupan area akun.");
         }
 
-        return response.json();
-      })
-      .then((result) => {
+        const result = await response.json();
         if (cancelled) return;
 
-        if (!result.authenticated) {
-          throw new Error("Sesi tidak valid. Silakan masuk kembali.");
+        if (result.authenticated === false) {
+          setIsAuthenticated(false);
+          setAreaScope("PG1");
+          setAreaScopeError("");
+          setCapabilitySelection(null);
+          setPipeSelection(null);
+          setCalibrationSelection(null);
+          return;
+        }
+        if (result.authenticated !== true) {
+          throw new Error("Status autentikasi tidak valid.");
         }
 
         const scope = result.user?.areaScope;
@@ -2083,21 +2395,33 @@ export default function DashboardPage() {
           throw new Error("Cakupan area akun tidak valid.");
         }
 
+        setIsAuthenticated(true);
         setAreaScope(scope);
-      })
-      .catch((error: unknown) => {
+        setAreaScopeError("");
+      } catch (error: unknown) {
         if (cancelled) return;
 
         console.error("Gagal memuat cakupan area:", error);
+        setIsAuthenticated(false);
+        setCapabilitySelection(null);
+        setPipeSelection(null);
+        setCalibrationSelection(null);
         setAreaScopeError(
           error instanceof Error
             ? error.message
             : "Gagal memuat cakupan area akun.",
         );
-      });
+      }
+    };
+
+    void refreshAuthentication();
+    window.addEventListener("ggf-user-updated", refreshAuthentication);
+    window.addEventListener("storage", refreshAuthentication);
 
     return () => {
       cancelled = true;
+      window.removeEventListener("ggf-user-updated", refreshAuthentication);
+      window.removeEventListener("storage", refreshAuthentication);
     };
   }, []);
 
@@ -2109,7 +2433,11 @@ export default function DashboardPage() {
     setSummaryReady(false);
     setSummaryError("");
 
-    fetch("/api/irrigation-summary", { cache: "no-store" })
+    const summaryUrl =
+      selectedDatasetYear === null
+        ? "/api/irrigation-summary"
+        : `/api/irrigation-summary?year=${selectedDatasetYear}`;
+    fetch(summaryUrl, { cache: "no-store" })
       .then(async (response) => {
         const result: unknown = await response.json();
         if (!response.ok) {
@@ -2138,6 +2466,12 @@ export default function DashboardPage() {
       .catch((error: unknown) => {
         if (cancelled) return;
         console.error("Gagal memuat ringkasan irigasi:", error);
+        if (!isAuthenticated) {
+          summary = { title: summaryData.title, cells: summaryData.cells };
+          setSummaryError("");
+          setSummaryReady(true);
+          return;
+        }
         setSummaryError(
           error instanceof Error
             ? error.message
@@ -2148,7 +2482,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [areaScope]);
+  }, [areaScope, isAuthenticated, masterDataRefreshKey, selectedDatasetYear]);
 
   const openCapabilityDetail = (
     equipmentType: EquipmentType,
@@ -2182,35 +2516,50 @@ export default function DashboardPage() {
       try {
         const saved = window.localStorage.getItem(EQUIPMENT_STORAGE_KEY);
         if (saved) {
-          const parsed: unknown = JSON.parse(saved);
-          if (
-            !Array.isArray(parsed) ||
-            !parsed.every(
-              (record) =>
-                record &&
-                typeof record.sheet === "string" &&
-                typeof record.row === "number" &&
-                typeof record.code === "string" &&
-                record.fields &&
-                typeof record.fields === "object"
-            )
-          ) {
-            throw new Error("Format data aset lokal tidak valid.");
+          if (!datasetMetadataInitialized.current) {
+            await refreshMasterDataMetadata();
+          }
+          if (!datasetMetadataInitialized.current) {
+            throw new Error("Gagal memastikan versi data sebelum migrasi aset lokal.");
           }
 
-          const migrationResponse = await fetch("/api/irrigation-equipment/migrate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ records: parsed }),
-          });
-          const migrationResult = (await migrationResponse.json()) as { error?: string };
-          if (!migrationResponse.ok) {
-            throw new Error(migrationResult.error ?? "Gagal memigrasikan data aset lokal.");
+          if (activeDatasetYearRef.current !== null) {
+            window.localStorage.removeItem(EQUIPMENT_STORAGE_KEY);
+          } else {
+            const parsed: unknown = JSON.parse(saved);
+            if (
+              !Array.isArray(parsed) ||
+              !parsed.every(
+                (record) =>
+                  record &&
+                  typeof record.sheet === "string" &&
+                  typeof record.row === "number" &&
+                  typeof record.code === "string" &&
+                  record.fields &&
+                  typeof record.fields === "object"
+              )
+            ) {
+              throw new Error("Format data aset lokal tidak valid.");
+            }
+
+            const migrationResponse = await fetch("/api/irrigation-equipment/migrate", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ records: parsed }),
+            });
+            const migrationResult = (await migrationResponse.json()) as { error?: string };
+            if (!migrationResponse.ok) {
+              throw new Error(migrationResult.error ?? "Gagal memigrasikan data aset lokal.");
+            }
+            window.localStorage.removeItem(EQUIPMENT_STORAGE_KEY);
           }
-          window.localStorage.removeItem(EQUIPMENT_STORAGE_KEY);
         }
 
-        const response = await fetch("/api/irrigation-equipment", { cache: "no-store" });
+        const equipmentUrl =
+          selectedDatasetYear === null
+            ? "/api/irrigation-equipment"
+            : `/api/irrigation-equipment?year=${selectedDatasetYear}`;
+        const response = await fetch(equipmentUrl, { cache: "no-store" });
         const result = (await response.json()) as EquipmentRecord[] | { error?: string };
         if (!response.ok) {
           throw new Error(
@@ -2241,12 +2590,21 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [areaScope]);
+  }, [
+    areaScope,
+    masterDataRefreshKey,
+    refreshMasterDataMetadata,
+    selectedDatasetYear,
+  ]);
 
   const saveEquipmentRecord = async (
     record: EquipmentRecord,
     fields: Record<string, string>
   ): Promise<boolean> => {
+    if (isHistoricalDataset) {
+      setEquipmentStorageError(masterDataT("historicalReadOnly"));
+      return false;
+    }
     if (!areaScope) {
       setEquipmentStorageError("Cakupan area akun belum tersedia.");
       return false;
@@ -2294,6 +2652,10 @@ export default function DashboardPage() {
   };
 
   const deleteEquipmentRecord = async (record: EquipmentRecord): Promise<boolean> => {
+    if (isHistoricalDataset) {
+      setEquipmentStorageError(masterDataT("historicalReadOnly"));
+      return false;
+    }
     if (!areaScope) {
       setEquipmentStorageError("Cakupan area akun belum tersedia.");
       return false;
@@ -2330,6 +2692,10 @@ export default function DashboardPage() {
     group: string,
     fields: Record<string, string>
   ): Promise<boolean> => {
+    if (isHistoricalDataset) {
+      setEquipmentStorageError(masterDataT("historicalReadOnly"));
+      return false;
+    }
     if (!areaScope) {
       setEquipmentStorageError("Cakupan area akun belum tersedia.");
       return false;
@@ -2486,7 +2852,66 @@ export default function DashboardPage() {
       ).length / records.length
     );
   };
-
+  const areaCalibrationRows = calibrationRows(
+    visibleEquipmentRecords,
+    54,
+    57,
+    undefined,
+    areaScope === "PG1" || !areaScope ? undefined : areaScope,
+  );
+  const deepWellCalibrationRows = calibrationRows(
+    visibleEquipmentRecords,
+    40,
+    43,
+    textCell("M38"),
+    areaScope === "PG1" || !areaScope ? undefined : areaScope,
+  );
+  const reservoirCalibrationRows = calibrationRows(
+    visibleEquipmentRecords,
+    47,
+    50,
+    textCell("M45"),
+    areaScope === "PG1" || !areaScope ? undefined : areaScope,
+  );
+  const totalPipeRows = pipeRows(
+    50,
+    53,
+    areaScope === "PG1" || !areaScope ? undefined : areaScope,
+  );
+  const areaPipeRows = pipeRows(
+    39,
+    47,
+    areaScope === "PG1" || !areaScope ? undefined : areaScope,
+  );
+  const pipeChartGroups = [
+    ...["Lakop", "Kijung", "Divisi 2"].map((area) => ({
+      label: area,
+      bars: areaPipeRows
+        .filter(
+          (row) =>
+            String(row[0]).toLowerCase() === area.toLowerCase() &&
+            String(row[1]).trim(),
+        )
+        .map((row) => ({
+          label: String(row[1]),
+          values: [3, 4, 5, 6].map((column) => Number(row[column]) || 0),
+        })),
+    })),
+    {
+      label: textCell("B50"),
+      bars: totalPipeRows
+        .filter(
+          (row) =>
+            String(row[0]).toLowerCase() === "total" &&
+            String(row[1]).toLowerCase() !== "galvanis + hdpe" &&
+            String(row[1]).trim(),
+        )
+        .map((row) => ({
+          label: String(row[1]),
+          values: [3, 4, 5, 6].map((column) => Number(row[column]) || 0),
+        })),
+    },
+  ].filter((group) => group.bars.length > 0);
   if (!areaScope || !summaryReady) {
     const loadingError = areaScopeError || summaryError;
     return (
@@ -2497,7 +2922,41 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="mx-auto grid w-full max-w-[1800px] grid-cols-1 items-start gap-3 md:grid-cols-[3rem_minmax(0,1fr)] md:gap-4">
+    <div className="mx-auto w-full max-w-[1800px]">
+      {datasetYears.length > 0 && (
+        <div className="mb-5 flex flex-wrap items-end justify-between gap-4 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-theme-sm dark:border-gray-800 dark:bg-gray-900">
+          <label className="block min-w-48 text-sm font-medium text-gray-700 dark:text-gray-300">
+            {masterDataT("selectDashboardYear")}
+            <select
+              value={selectedDatasetYear ?? ""}
+              onChange={(event) =>
+                setSelectedDatasetYear(
+                  event.target.value ? Number(event.target.value) : null,
+                )
+              }
+              className="mt-1.5 h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+            >
+              {datasetYears.map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                  {year === activeDatasetYear
+                    ? ` — ${masterDataT("activeDashboardData")}`
+                    : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          {isHistoricalDataset ? (
+            <p className="text-sm font-medium text-warning-700 dark:text-warning-400">
+              {masterDataT("historicalReadOnly")}
+            </p>
+          ) : activeDatasetYear !== null ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {masterDataT("activeYearLabel")}: {activeDatasetYear}
+            </p>
+          ) : null}
+        </div>
+      )}
       {restrictedAccessNotice && (
         <div className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/40 p-4">
           <div
@@ -2525,14 +2984,7 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
-      <DashboardSectionNav />
       <main className="min-w-0 space-y-5 pb-8">
-      <div className="relative overflow-hidden rounded-2xl border border-[#dce9df] bg-gradient-to-br from-white via-white to-[#f0f8f2] px-5 py-5 shadow-[0_4px_18px_rgba(25,55,38,0.06)] sm:px-7 sm:py-6">
-        <div className="absolute inset-y-0 start-0 w-1.5 bg-[#00B050]" aria-hidden="true" />
-        <h1 className="ps-2 text-xl font-bold tracking-[-0.03em] text-[#183b2b] sm:text-2xl">
-          {summary.title}
-        </h1>
-      </div>
       {(equipmentStorageError || equipmentActionMessage) && (
         <div
           role={equipmentStorageError ? "alert" : "status"}
@@ -2554,7 +3006,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div id="readiness" className="grid scroll-mt-24 grid-cols-1 gap-5 xl:grid-cols-2">
+      <div id="readiness" className="grid scroll-mt-40 grid-cols-1 gap-5 xl:grid-cols-2">
         <Panel
           title={textCell("B4")}
           titleIcon={<HeadingIcon><Cog size={18} aria-hidden="true" /></HeadingIcon>}
@@ -2562,6 +3014,7 @@ export default function DashboardPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
               <ReadinessTable
+                key={`engine-deep-well-${isAuthenticated}`}
                 title={textCell("B5")}
                 firstRow={7}
                 lastRow={10}
@@ -2569,12 +3022,14 @@ export default function DashboardPage() {
                 equipmentType="Engine"
                 equipmentRecords={visibleEquipmentRecords}
                 areaScope={areaScope === "PG1" ? undefined : areaScope}
+                canViewDetails={isAuthenticated}
                 onRestrictedClick={showRestrictedAreaMessage}
                 onSaveRecord={saveEquipmentRecord}
                 onDeleteRecord={deleteEquipmentRecord}
                 onAddRecord={addEquipmentRecord}
               />
               <ReadinessTable
+                key={`engine-reservoir-${isAuthenticated}`}
                 title={textCell("B12")}
                 firstRow={14}
                 lastRow={17}
@@ -2582,6 +3037,7 @@ export default function DashboardPage() {
                 equipmentType="Engine"
                 equipmentRecords={visibleEquipmentRecords}
                 areaScope={areaScope === "PG1" ? undefined : areaScope}
+                canViewDetails={isAuthenticated}
                 onRestrictedClick={showRestrictedAreaMessage}
                 onSaveRecord={saveEquipmentRecord}
                 onDeleteRecord={deleteEquipmentRecord}
@@ -2615,6 +3071,7 @@ export default function DashboardPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
               <ReadinessTable
+                key={`irrigator-iti-${isAuthenticated}`}
                 title={textCell("M5")}
                 firstRow={7}
                 lastRow={10}
@@ -2623,12 +3080,14 @@ export default function DashboardPage() {
                 equipmentType="Irrigator"
                 equipmentRecords={visibleEquipmentRecords}
                 areaScope={areaScope === "PG1" ? undefined : areaScope}
+                canViewDetails={isAuthenticated}
                 onRestrictedClick={showRestrictedAreaMessage}
                 onSaveRecord={saveEquipmentRecord}
                 onDeleteRecord={deleteEquipmentRecord}
                 onAddRecord={addEquipmentRecord}
               />
               <ReadinessTable
+                key={`irrigator-bti-${isAuthenticated}`}
                 title={textCell("M12")}
                 firstRow={14}
                 lastRow={17}
@@ -2637,6 +3096,7 @@ export default function DashboardPage() {
                 equipmentType="Irrigator"
                 equipmentRecords={visibleEquipmentRecords}
                 areaScope={areaScope === "PG1" ? undefined : areaScope}
+                canViewDetails={isAuthenticated}
                 onRestrictedClick={showRestrictedAreaMessage}
                 onSaveRecord={saveEquipmentRecord}
                 onDeleteRecord={deleteEquipmentRecord}
@@ -2664,7 +3124,7 @@ export default function DashboardPage() {
         </Panel>
       </div>
 
-      <div id="capability" className="grid scroll-mt-24 grid-cols-1 gap-5 xl:grid-cols-2">
+      <div id="capability" className="grid scroll-mt-40 grid-cols-1 gap-5 xl:grid-cols-2">
         <Panel
           title={textCell("B26")}
           titleIcon={<HeadingIcon><BarChart3 size={18} aria-hidden="true" /></HeadingIcon>}
@@ -2677,7 +3137,9 @@ export default function DashboardPage() {
               labelColumn="B"
               valueColumns={["C", "D", "E"]}
               sideBySide
+              centered
               scopeArea={areaScope === "PG1" ? undefined : areaScope}
+              canViewDetails={isAuthenticated}
               onRestrictedClick={showRestrictedAreaMessage}
               onValueClick={(dimension, category, grade) =>
                 setCapabilitySelection({
@@ -2690,41 +3152,49 @@ export default function DashboardPage() {
             />
             <div className={`grid grid-cols-1 gap-4 ${areaScope === "PG1" ? "xl:grid-cols-2" : ""}`}>
               <BarChart
+                key={`engine-capability-area-${isAuthenticated}`}
                 categories={chartAreas}
                 series={areaScope === "PG1" ? engineCapabilityArea : scopedCapabilitySeries("Engine", ["C", "D", "E"])}
                 colors={CAPABILITY_CHART_COLORS}
                 showTotals
                 height={245}
                 integerYAxisLabels
-                onDataPointClick={(seriesIndex, dataPointIndex) =>
+                onDataPointClick={(seriesIndex, dataPointIndex) => {
+                  if (!isAuthenticated) return;
                   openCapabilityDetail(
                     "Engine",
                     "area",
                     chartAreas,
-                    ["C", "D", "E"].map((column) => textCell(`${column}27`)),
+                    ["C", "D", "E"].map((column) =>
+                      textCell(`${column}27`),
+                    ),
                     seriesIndex,
-                    dataPointIndex
-                  )
-                }
+                    dataPointIndex,
+                  );
+                }}
               />
               {areaScope === "PG1" && (
                 <BarChart
+                  key={`engine-capability-type-${isAuthenticated}`}
                   categories={[34, 35].map((row) => textCell(`B${row}`))}
                   series={engineCapabilitySource}
                   colors={CAPABILITY_CHART_COLORS}
                   stacked
                   showTotals
                   height={245}
-                  onDataPointClick={(seriesIndex, dataPointIndex) =>
+                  onDataPointClick={(seriesIndex, dataPointIndex) => {
+                    if (!isAuthenticated) return;
                     openCapabilityDetail(
                       "Engine",
                       "group",
                       [34, 35].map((row) => textCell(`B${row}`)),
-                      ["C", "D", "E"].map((column) => textCell(`${column}33`)),
+                      ["C", "D", "E"].map((column) =>
+                        textCell(`${column}33`),
+                      ),
                       seriesIndex,
-                      dataPointIndex
-                    )
-                  }
+                      dataPointIndex,
+                    );
+                  }}
                 />
               )}
             </div>
@@ -2743,7 +3213,9 @@ export default function DashboardPage() {
               labelColumn="M"
               valueColumns={["N", "O", "P"]}
               sideBySide
+              centered
               scopeArea={areaScope === "PG1" ? undefined : areaScope}
+              canViewDetails={isAuthenticated}
               onRestrictedClick={showRestrictedAreaMessage}
               onValueClick={(dimension, category, grade) =>
                 setCapabilitySelection({
@@ -2756,41 +3228,49 @@ export default function DashboardPage() {
             />
             <div className={`grid grid-cols-1 gap-4 ${areaScope === "PG1" ? "xl:grid-cols-2" : ""}`}>
               <BarChart
+                key={`irrigator-capability-area-${isAuthenticated}`}
                 categories={chartAreas}
                 series={areaScope === "PG1" ? irrigatorCapabilityArea : scopedCapabilitySeries("Irrigator", ["N", "O", "P"])}
                 colors={CAPABILITY_CHART_COLORS}
                 showTotals
                 height={245}
                 integerYAxisLabels
-                onDataPointClick={(seriesIndex, dataPointIndex) =>
+                onDataPointClick={(seriesIndex, dataPointIndex) => {
+                  if (!isAuthenticated) return;
                   openCapabilityDetail(
                     "Irrigator",
                     "area",
                     chartAreas,
-                    ["N", "O", "P"].map((column) => textCell(`${column}27`)),
+                    ["N", "O", "P"].map((column) =>
+                      textCell(`${column}27`),
+                    ),
                     seriesIndex,
-                    dataPointIndex
-                  )
-                }
+                    dataPointIndex,
+                  );
+                }}
               />
               {areaScope === "PG1" && (
                 <BarChart
+                  key={`irrigator-capability-type-${isAuthenticated}`}
                   categories={[34, 35].map((row) => textCell(`M${row}`))}
                   series={irrigatorCapabilityType}
                   colors={CAPABILITY_CHART_COLORS}
                   stacked
                   showTotals
                   height={245}
-                  onDataPointClick={(seriesIndex, dataPointIndex) =>
+                  onDataPointClick={(seriesIndex, dataPointIndex) => {
+                    if (!isAuthenticated) return;
                     openCapabilityDetail(
                       "Irrigator",
                       "group",
                       [34, 35].map((row) => textCell(`M${row}`)),
-                      ["N", "O", "P"].map((column) => textCell(`${column}33`)),
+                      ["N", "O", "P"].map((column) =>
+                        textCell(`${column}33`),
+                      ),
                       seriesIndex,
-                      dataPointIndex
-                    )
-                  }
+                      dataPointIndex,
+                    );
+                  }}
                 />
               )}
             </div>
@@ -2805,42 +3285,49 @@ export default function DashboardPage() {
           titleIcon={<HeadingIcon><Cable size={18} aria-hidden="true" /></HeadingIcon>}
         >
           <div className="space-y-4">
-            <DataTable
-              headers={[
-                textCell("B38"), textCell("C38"), textCell("E38"), textCell("F38"),
-                textCell("G38"), textCell("I38"), textCell("J38"), textCell("K38"),
-              ]}
-              rows={pipeRows(39, 47, areaScope === "PG1" ? undefined : areaScope)}
-              compact
-              pipeHeader
-              mergeRepeatedFirstColumn
-              restrictedAreas={restrictedAreasForScope(areaScope === "PG1" ? undefined : areaScope)}
-              onRestrictedClick={showRestrictedAreaMessage}
-              columnWidths={["11%", "20%", "8%", "9%", "9%", "9%", "9%", "25%"]}
-              leftAlignedColumns={[0, 1, 2]}
-              wrapColumns={[1]}
-              onValueClick={(row, header, headers) =>
-                setPipeSelection({ row, header, headers })
-              }
-            />
-            <DataTable
-              headers={[
-                textCell("B49"), textCell("C49"), textCell("E49"), textCell("F49"),
-                textCell("G49"), textCell("I49"), textCell("J49"), textCell("K49"),
-              ]}
-              rows={pipeRows(50, 53, areaScope === "PG1" ? undefined : areaScope)}
-              compact
-              pipeHeader
-              mergeRepeatedFirstColumn
-              restrictedAreas={restrictedAreasForScope(areaScope === "PG1" ? undefined : areaScope)}
-              onRestrictedClick={showRestrictedAreaMessage}
-              columnWidths={["11%", "20%", "8%", "9%", "9%", "9%", "9%", "25%"]}
-              leftAlignedColumns={[0, 1, 2]}
-              wrapColumns={[1]}
-              onValueClick={(row, header, headers) =>
-                setPipeSelection({ row, header, headers })
-              }
-            />
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+              {["Lakop", "Kijung", "Divisi 2"].map((area) => (
+                <div key={area} className="w-full min-w-0 space-y-2">
+                  <h3 className="text-sm font-semibold text-[#365343] dark:text-gray-200">
+                    {area}
+                  </h3>
+                  <DataTable
+                    headers={[
+                      textCell("B38"), textCell("C38"), textCell("E38"), textCell("F38"),
+                      textCell("G38"), textCell("I38"), textCell("J38"), textCell("K38"),
+                    ]}
+                    rows={areaPipeRows.filter(
+                      (row) => String(row[0]).toLowerCase() === area.toLowerCase(),
+                    )}
+                    compact
+                    dense
+                    pipeHeader
+                    mergeRepeatedFirstColumn
+                    restrictedAreas={restrictedAreasForScope(areaScope === "PG1" ? undefined : areaScope)}
+                    onRestrictedClick={showRestrictedAreaMessage}
+                    columnWidths={["14%", "24%", "10%", "9%", "11%", "9%", "9%", "14%"]}
+                    leftAlignedColumns={[0, 1, 2]}
+                    wrapColumns={[1]}
+                  />
+                </div>
+              ))}
+            </div>
+            {areaScope === "PG1" && (
+              <div className="w-full min-w-0 space-y-2">
+                <h3 className="text-sm font-semibold text-[#365343] dark:text-gray-200">
+                  Kondisi Pipa per Area dan Jenis
+                </h3>
+                <PipeStackedBarChart
+                  groups={pipeChartGroups}
+                  statuses={[
+                    { label: textCell("F38"), color: "#2563EB" },
+                    { label: textCell("G38"), color: "#039855" },
+                    { label: textCell("I38"), color: "#FDE047" },
+                    { label: textCell("J38"), color: "#D92D20" },
+                  ]}
+                />
+              </div>
+            )}
           </div>
         </Panel>
 
@@ -2848,6 +3335,15 @@ export default function DashboardPage() {
           id="calibration"
           title={textCell("M37")}
           titleIcon={<HeadingIcon><ClipboardCheck size={18} aria-hidden="true" /></HeadingIcon>}
+          right={
+            <Link
+              href="/kalibrasi"
+              className="inline-flex h-9 items-center gap-2 rounded-lg bg-success-700 px-3 text-xs font-semibold text-white shadow-theme-xs transition hover:bg-success-800"
+            >
+              <ClipboardCheck size={15} aria-hidden="true" />
+              {t("openForm")}
+            </Link>
+          }
           className="2xl:col-span-2"
         >
           <div className="space-y-4">
@@ -2863,17 +3359,20 @@ export default function DashboardPage() {
                   readinessStyle
                   calibrationStyle
                   headers={[textCell("M39"), textCell("N39"), textCell("O39"), textCell("P39")]}
-                  rows={calibrationRows(visibleEquipmentRecords, 40, 43, textCell("M38"), areaScope === "PG1" ? undefined : areaScope)}
+                  rows={deepWellCalibrationRows}
                   highlightLast
                   restrictedAreas={restrictedAreasForScope(areaScope === "PG1" ? undefined : areaScope, false)}
                   onRestrictedClick={showRestrictedAreaMessage}
                   percentageColumns={[3]}
-                  onValueClick={(row, header) =>
-                    setCalibrationSelection({
-                      group: textCell("M38"),
-                      area: String(row[0]),
-                      calibration: header,
-                    })
+                  onValueClick={
+                    isAuthenticated
+                      ? (row, header) =>
+                          setCalibrationSelection({
+                            group: textCell("M38"),
+                            area: String(row[0]),
+                            calibration: header,
+                          })
+                      : undefined
                   }
                 />
               </div>
@@ -2888,17 +3387,20 @@ export default function DashboardPage() {
                   readinessStyle
                   calibrationStyle
                   headers={[textCell("M46"), textCell("N46"), textCell("O46"), textCell("P46")]}
-                  rows={calibrationRows(visibleEquipmentRecords, 47, 50, textCell("M45"), areaScope === "PG1" ? undefined : areaScope)}
+                  rows={reservoirCalibrationRows}
                   highlightLast
                   restrictedAreas={restrictedAreasForScope(areaScope === "PG1" ? undefined : areaScope, false)}
                   onRestrictedClick={showRestrictedAreaMessage}
                   percentageColumns={[3]}
-                  onValueClick={(row, header) =>
-                    setCalibrationSelection({
-                      group: textCell("M45"),
-                      area: String(row[0]),
-                      calibration: header,
-                    })
+                  onValueClick={
+                    isAuthenticated
+                      ? (row, header) =>
+                          setCalibrationSelection({
+                            group: textCell("M45"),
+                            area: String(row[0]),
+                            calibration: header,
+                          })
+                      : undefined
                   }
                 />
               </div>
@@ -2913,41 +3415,50 @@ export default function DashboardPage() {
                   readinessStyle
                   calibrationStyle
                   headers={[textCell("M53"), textCell("N53"), textCell("O53"), textCell("P53")]}
-                  rows={calibrationRows(visibleEquipmentRecords, 54, 57, undefined, areaScope === "PG1" ? undefined : areaScope)}
+                  rows={areaCalibrationRows}
                   highlightLast
                   restrictedAreas={restrictedAreasForScope(areaScope === "PG1" ? undefined : areaScope, false)}
                   onRestrictedClick={showRestrictedAreaMessage}
                   percentageColumns={[3]}
-                  onValueClick={(row, header) =>
-                    setCalibrationSelection({
-                      area: String(row[0]),
-                      calibration: header,
-                    })
+                  onValueClick={
+                    isAuthenticated
+                      ? (row, header) =>
+                          setCalibrationSelection({
+                            area: String(row[0]),
+                            calibration: header,
+                          })
+                      : undefined
                   }
                 />
               </div>
             </div>
             <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
-              {[55, 56, 57].map((row) => (
-                <div key={row} className="rounded-xl border border-[#edf1ee] bg-[#fcfdfc] p-2">
-                  <h3 className="text-center text-sm font-semibold text-[#365343]">{textCell(`B${row}`)}</h3>
-                  <CalibrationPieChart
-                    label={textCell(`B${row}`)}
-                    values={[numberCell(`C${row}`), numberCell(`D${row}`)]}
-                    restricted={isRestrictedArea(
-                      textCell(`B${row}`),
-                      areaScope === "PG1" ? undefined : areaScope,
-                    )}
-                    onRestrictedClick={showRestrictedAreaMessage}
-                  />
-                </div>
-              ))}
+              {[
+                { label: textCell("M38"), rows: deepWellCalibrationRows },
+                { label: textCell("M45"), rows: reservoirCalibrationRows },
+                { label: textCell("M53"), rows: areaCalibrationRows },
+              ].map(({ label, rows }) => {
+                const totalRow = rows.find(
+                  (entry) => String(entry[0]).toLowerCase() === "total",
+                );
+
+                return (
+                  <div key={label} className="rounded-xl border border-[#edf1ee] bg-[#fcfdfc] p-2">
+                    <h3 className="text-center text-sm font-semibold text-[#365343]">{label}</h3>
+                    <CalibrationPieChart
+                      label={label}
+                      values={[Number(totalRow?.[1]) || 0, Number(totalRow?.[2]) || 0]}
+                      onRestrictedClick={showRestrictedAreaMessage}
+                    />
+                  </div>
+                );
+              })}
             </div>
           </div>
         </Panel>
       </div>
       <CapabilityDetailModal
-        selection={capabilitySelection}
+        selection={isAuthenticated ? capabilitySelection : null}
         records={visibleEquipmentRecords}
         onClose={() => setCapabilitySelection(null)}
         onSaveRecord={saveEquipmentRecord}
@@ -2955,11 +3466,11 @@ export default function DashboardPage() {
         onAddRecord={addEquipmentRecord}
       />
       <PipeValueDetailModal
-        selection={pipeSelection}
+        selection={isAuthenticated ? pipeSelection : null}
         onClose={() => setPipeSelection(null)}
       />
       <CalibrationDetailModal
-        selection={calibrationSelection}
+        selection={isAuthenticated ? calibrationSelection : null}
         records={visibleEquipmentRecords}
         onClose={() => setCalibrationSelection(null)}
         onSaveRecord={saveEquipmentRecord}

@@ -1,7 +1,7 @@
 
 "use client";
 
-import { Link } from "@/i18n/navigation";
+import { Link, useRouter } from "@/i18n/navigation";
 import { ChevronDownIcon } from "@/icons";
 import Image from "next/image";
 import { useEffect, useState } from "react";
@@ -19,10 +19,12 @@ import {
 } from "@/data/userData";
 
 export default function UserDropdown() {
+  const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<ManagedUser | null>(null);
   const [roles, setRoles] = useState<UserRole[]>(DEFAULT_ROLES);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -99,7 +101,7 @@ export default function UserDropdown() {
     setIsOpen((previous) => !previous);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (!currentUser) return;
 
     try {
@@ -123,11 +125,20 @@ export default function UserDropdown() {
       // Proses logout tetap berjalan jika pencatatan aktivitas gagal.
     }
 
-    window.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
-    window.dispatchEvent(new Event("ggf-user-updated"));
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) {
+        throw new Error("Gagal mengakhiri sesi pengguna.");
+      }
 
-    closeDropdown();
-    window.location.href = "/signin";
+      window.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+      window.dispatchEvent(new Event("ggf-user-updated"));
+      closeDropdown();
+      router.replace("/");
+    } catch (error) {
+      console.error("Gagal keluar dari akun:", error);
+      setLogoutError("Tidak dapat keluar dari akun. Silakan coba kembali.");
+    }
   };
 
   // Jangan tampilkan tombol Login sebelum status pengguna selesai diperiksa.
@@ -178,6 +189,8 @@ export default function UserDropdown() {
       <button
         type="button"
         onClick={toggleDropdown}
+        aria-label="Buka menu akun"
+        aria-expanded={isOpen}
         className="dropdown-toggle flex items-center text-gray-700 dark:text-gray-400"
       >
         <span className="me-3 h-11 w-11 overflow-hidden rounded-full">
@@ -306,6 +319,11 @@ export default function UserDropdown() {
         >
           Keluar dari Akun
         </button>
+        {logoutError && (
+          <p role="alert" className="mt-2 text-xs text-error-600">
+            {logoutError}
+          </p>
+        )}
       </Dropdown>
     </div>
   );

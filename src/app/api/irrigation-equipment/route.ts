@@ -12,6 +12,10 @@ import {
   type EquipmentRecord,
   type EquipmentRow,
 } from "@/lib/irrigationEquipment";
+import {
+  equipmentRecordsFromSnapshot,
+  getMasterDataSnapshot,
+} from "@/lib/masterData";
 import type { PoolClient } from "pg";
 
 export const runtime = "nodejs";
@@ -101,27 +105,51 @@ async function selectEquipmentById(
     : null;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const access = await getAuthenticatedAreaScope();
+    const areaScope = access?.areaScope ?? "PG1";
 
-    if (!access) {
+    const rawYear = new URL(request.url).searchParams.get("year");
+    const requestedYear = rawYear === null ? undefined : Number(rawYear);
+    if (
+      rawYear !== null &&
+      (!Number.isInteger(requestedYear) ||
+        Number(requestedYear) < 2000 ||
+        Number(requestedYear) > 2100)
+    ) {
       return NextResponse.json(
-        { error: "Autentikasi diperlukan." },
-        {
-          status: 401,
-          headers: { "Cache-Control": "no-store" },
-        },
+        { error: "Tahun dataset tidak valid." },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
+    const snapshot = await getMasterDataSnapshot(requestedYear);
+    if (!access && requestedYear !== undefined && !snapshot?.is_active) {
+      return NextResponse.json(
+        { error: "Data arsip hanya tersedia setelah login." },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    if (requestedYear !== undefined && !snapshot) {
+      return NextResponse.json(
+        { error: `Data master tahun ${requestedYear} tidak ditemukan.` },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    if (snapshot && !snapshot.is_active) {
+      return NextResponse.json(
+        equipmentRecordsFromSnapshot(snapshot, areaScope),
+        { headers: { "Cache-Control": "no-store" } },
       );
     }
 
     await ensureIrrigationEquipmentSeeded();
-
     const result = await db.query<EquipmentRow>(
       `${equipmentSelect}
        WHERE ($1 = 'PG1' OR e.area_name = $1)
        ORDER BY e.source_sheet, e.source_row`,
-      [access.areaScope],
+      [areaScope],
     );
 
     return NextResponse.json(

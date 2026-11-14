@@ -1,4 +1,13 @@
 export type ExcelRow = Record<string, string>;
+export type ParsedExcelRow = {
+  rowNumber: number;
+  values: ExcelRow;
+};
+export type ParsedExcelSheet = {
+  rows: ParsedExcelRow[];
+  cells: Record<string, string | number>;
+};
+export type ParsedExcelWorkbook = Record<string, ParsedExcelSheet>;
 
 type ZipEntry = {
   name: string;
@@ -94,54 +103,84 @@ function parseRelationships(xml: string) {
   return map;
 }
 
-function findFirstWorksheet(xml: string, relationships: Map<string, string>) {
-  const doc = new DOMParser().parseFromString(xml, "application/xml");
-  const sheet = doc.getElementsByTagNameNS("*", "sheet")[0];
-  const relationshipId = sheet?.getAttribute("r:id") ?? "rId1";
-  const target = relationships.get(relationshipId) ?? "worksheets/sheet1.xml";
-  return target.startsWith("/") ? target.slice(1) : `xl/${target.replace(/^\.\//, "")}`;
+function worksheetPath(target: string) {
+  const parts = target.startsWith("/") || target.startsWith("xl/")
+    ? []
+    : ["xl"];
+
+  for (const part of target.replace(/^\//, "").split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      parts.pop();
+    } else {
+      parts.push(part);
+    }
+  }
+
+  return parts.join("/");
 }
 
 function parseWorksheet(xml: string, sharedStrings: string[]) {
   const doc = new DOMParser().parseFromString(xml, "application/xml");
-  const rows = Array.from(doc.getElementsByTagNameNS("*", "row"));
-  if (!rows.length) return [] as ExcelRow[];
-
-  const matrix = rows.map((row) => {
+  const rowElements = Array.from(doc.getElementsByTagNameNS("*", "row"));
+  const cells: Record<string, string | number> = {};
+  const rows = rowElements.map((row, index) => {
     const values: Record<number, string> = {};
     Array.from(row.getElementsByTagNameNS("*", "c")).forEach((cell) => {
       const ref = cell.getAttribute("r") ?? "A1";
       const index = cellColumn(ref);
       const type = cell.getAttribute("t");
-      let value = "";
+      let value: string | number = "";
       if (type === "inlineStr") {
         value = cell.getElementsByTagNameNS("*", "is")[0]?.textContent ?? "";
       } else {
         const raw = cell.getElementsByTagNameNS("*", "v")[0]?.textContent ?? "";
         if (type === "s") value = sharedStrings[Number(raw)] ?? "";
         else if (type === "b") value = raw === "1" ? "TRUE" : "FALSE";
-        else value = raw;
+        else if (raw && (!type || type === "n")) {
+          const numericValue = Number(raw);
+          value = Number.isFinite(numericValue) ? numericValue : raw;
+        } else value = raw;
       }
-      values[index] = value;
+      if (value !== "") {
+        cells[ref] = value;
+        values[index] = String(value);
+      }
     });
-    return values;
+    return {
+      rowNumber: Number(row.getAttribute("r")) || index + 1,
+      values,
+    };
   });
 
+  if (!rows.length) return { rows: [], cells };
+
   const headers: string[] = [];
-  Object.entries(matrix[0]).forEach(([index, value]) => {
+  const headerRowIndex = Math.max(
+    0,
+    rows.findIndex((row) => row.rowNumber === 1),
+  );
+  Object.entries(rows[headerRowIndex].values).forEach(([index, value]) => {
     headers[Number(index)] = value.trim();
   });
 
-  return matrix.slice(1).map((row) => {
-    const result: ExcelRow = {};
-    headers.forEach((header, index) => {
-      if (header) result[header] = row[index] ?? "";
-    });
-    return result;
-  });
+  const dataRows = rows
+    .filter((_, index) => index !== headerRowIndex)
+    .map(({ rowNumber, values: row }) => {
+      const result: ExcelRow = {};
+      headers.forEach((header, index) => {
+        if (header) result[header] = row[index] ?? "";
+      });
+      return { rowNumber, values: result };
+    })
+    .filter(({ values }) => Object.values(values).some((value) => value !== ""));
+
+  return { rows: dataRows, cells };
 }
 
-export async function parseXlsx(file: File): Promise<ExcelRow[]> {
+export async function parseXlsxWorkbook(
+  file: File,
+): Promise<ParsedExcelWorkbook> {
   const data = new Uint8Array(await file.arrayBuffer());
   if (u32(data, 0) !== 0x04034b50) throw new Error("Gunakan file Excel .xlsx yang valid.");
 
@@ -158,11 +197,42 @@ export async function parseXlsx(file: File): Promise<ExcelRow[]> {
   if (!workbook || !relationships) throw new Error("Workbook Excel tidak lengkap.");
 
   const relationshipMap = parseRelationships(xmlText(relationships));
-  const worksheetPath = findFirstWorksheet(xmlText(workbook), relationshipMap);
-  const worksheet = await get(worksheetPath);
-  if (!worksheet) throw new Error("Sheet pertama Excel tidak ditemukan.");
-
   const sharedStringsData = await get("xl/sharedStrings.xml");
   const sharedStrings = sharedStringsData ? parseSharedStrings(xmlText(sharedStringsData)) : [];
-  return parseWorksheet(xmlText(worksheet), sharedStrings);
+  const workbookDocument = new DOMParser().parseFromString(
+    xmlText(workbook),
+    "application/xml",
+  );
+  const sheetElements = Array.from(
+    workbookDocument.getElementsByTagNameNS("*", "sheet"),
+  );
+  if (!sheetElements.length) throw new Error("Workbook tidak memiliki sheet.");
+
+  const result: ParsedExcelWorkbook = {};
+  for (const sheet of sheetElements) {
+    const name = sheet.getAttribute("name")?.trim();
+    const relationshipId =
+      sheet.getAttributeNS(
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        "id",
+      ) ??
+      sheet.getAttribute("r:id") ??
+      "";
+    const target = relationshipMap.get(relationshipId);
+    if (!name || !target) {
+      throw new Error("Daftar sheet pada workbook tidak valid.");
+    }
+
+    const worksheet = await get(worksheetPath(target));
+    if (!worksheet) throw new Error(`Sheet ${name} tidak dapat dibaca.`);
+    result[name] = parseWorksheet(xmlText(worksheet), sharedStrings);
+  }
+
+  return result;
+}
+
+export async function parseXlsx(file: File): Promise<ExcelRow[]> {
+  const workbook = await parseXlsxWorkbook(file);
+  const firstSheet = Object.values(workbook)[0];
+  return firstSheet?.rows.map((row) => row.values) ?? [];
 }

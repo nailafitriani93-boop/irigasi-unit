@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import summaryData from "@/data/irrigationSummary.json";
 import { getAuthenticatedAreaScope } from "@/lib/areaAccess";
+import { getMasterDataSnapshot } from "@/lib/masterData";
 import type { AreaScope } from "@/data/userData";
 
 export const runtime = "nodejs";
@@ -23,9 +24,13 @@ function getColumnNumber(column: string) {
   return number;
 }
 
-function getScopedSummary(areaScope: AreaScope) {
+function getScopedSummary(
+  title: string,
+  sourceCells: Record<string, string | number>,
+  areaScope: AreaScope,
+) {
   const cells: Record<string, string | number> = {
-    ...summaryData.cells,
+    ...sourceCells,
   };
   const rowNumbers = new Set(
     Object.keys(cells)
@@ -59,27 +64,49 @@ function getScopedSummary(areaScope: AreaScope) {
     }
   }
 
-  return { title: summaryData.title, cells };
+  return { title, cells };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const access = await getAuthenticatedAreaScope();
+    const areaScope: AreaScope = access?.areaScope ?? "PG1";
 
-    if (!access) {
+    const rawYear = new URL(request.url).searchParams.get("year");
+    const requestedYear = rawYear === null ? undefined : Number(rawYear);
+    if (
+      rawYear !== null &&
+      (!Number.isInteger(requestedYear) ||
+        Number(requestedYear) < 2000 ||
+        Number(requestedYear) > 2100)
+    ) {
       return NextResponse.json(
-        { error: "Autentikasi diperlukan." },
-        {
-          status: 401,
-          headers: { "Cache-Control": "no-store" },
-        },
+        { error: "Tahun dataset tidak valid." },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
+    const snapshot = await getMasterDataSnapshot(requestedYear);
+    if (!access && requestedYear !== undefined && !snapshot?.is_active) {
+      return NextResponse.json(
+        { error: "Data arsip hanya tersedia setelah login." },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    if (requestedYear !== undefined && !snapshot) {
+      return NextResponse.json(
+        { error: `Data master tahun ${requestedYear} tidak ditemukan.` },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
+    const cells = snapshot?.workbook_data.Summary?.cells ?? summaryData.cells;
+    const title =
+      typeof cells.B2 === "string" ? cells.B2 : summaryData.title;
     const summary =
-      access.areaScope === "PG1"
-        ? summaryData
-        : getScopedSummary(access.areaScope);
+      areaScope === "PG1"
+        ? { title, cells }
+        : getScopedSummary(title, cells, areaScope);
 
     return NextResponse.json(summary, {
       headers: { "Cache-Control": "no-store" },

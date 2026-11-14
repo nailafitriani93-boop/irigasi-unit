@@ -2,11 +2,15 @@
 "use client";
 
 import AppHeader from "@/layout/AppHeader";
+import AppSidebar from "@/layout/AppSidebar";
 import React, { useEffect, useState } from "react";
 import { usePathname, useRouter } from "@/i18n/navigation";
 
 const ROUTE_ACCESS: Record<string, string> = {
   "/": "dashboard",
+  "/kalibrasi": "dashboard",
+  "/master-data": "dashboard",
+  "/inspeksi": "dashboard",
   "/manajemen-user": "manajemen-user",
   "/profile": "profile",
 };
@@ -37,11 +41,23 @@ export default function AdminLayout({
         if (cancelled) return;
 
         if (!session?.authenticated || !session.user) {
+          if (pathname === "/") {
+            setAuthorizedPath(pathname);
+            return;
+          }
           router.replace("/signin");
           return;
         }
 
         const requiredAccess = ROUTE_ACCESS[pathname];
+
+        const isMasterDataManager =
+          pathname === "/master-data" &&
+          session.user.areaScope === "PG1";
+        if (pathname === "/master-data" && !isMasterDataManager) {
+          setAccessDenied(true);
+          return;
+        }
 
         // Pertahankan perilaku rute yang tidak tercantum di pemetaan.
         if (!requiredAccess) {
@@ -61,8 +77,10 @@ export default function AdminLayout({
           session.user.username === "100002";
 
         if (
+          pathname !== "/profile" &&
           !hasFullPageAccess &&
           !isUserManager &&
+          !isMasterDataManager &&
           !allowedPages.includes(requiredAccess)
         ) {
           setAccessDenied(true);
@@ -93,42 +111,46 @@ export default function AdminLayout({
   }, [pathname, router]);
 
   const canRenderPage = authorizedPath === pathname;
+  const isInspectionPage = pathname === "/inspeksi";
 
   return (
     <div className="min-h-screen w-full">
       <div className="w-full min-w-0">
-        <AppHeader />
+        {!isInspectionPage && <AppHeader />}
+        <AppSidebar />
 
-        {accessDenied ? (
-          <main
-            className="flex min-h-[calc(100vh-76px)] w-full items-center justify-center p-4"
-            role="alert"
-          >
-            <div className="max-w-lg text-center">
-              <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
-                Anda tidak memiliki akses ke laman ini
-              </h1>
+        <div className="ps-16">
+          {accessDenied ? (
+            <main
+              className="flex min-h-[calc(100vh-76px)] w-full items-center justify-center p-4"
+              role="alert"
+            >
+              <div className="max-w-lg text-center">
+                <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
+                  Anda tidak memiliki akses ke laman ini
+                </h1>
 
-              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                Silakan hubungi administrator jika Anda membutuhkan akses
-                ke laman tersebut.
-              </p>
-            </div>
-          </main>
-        ) : canRenderPage ? (
-          <main className="w-full min-w-0 p-4 md:p-6">
-            {children}
-          </main>
-        ) : (
-          <main
-            className="flex min-h-[calc(100vh-76px)] w-full items-center justify-center"
-            aria-label="Memeriksa akses halaman"
-          >
-            <span className="text-sm text-gray-500">
-              Memeriksa akses...
-            </span>
-          </main>
-        )}
+                <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                  Silakan hubungi administrator jika Anda membutuhkan akses
+                  ke laman tersebut.
+                </p>
+              </div>
+            </main>
+          ) : canRenderPage ? (
+            <main className="w-full min-w-0 p-4 md:p-6">
+              {children}
+            </main>
+          ) : (
+            <main
+              className="flex min-h-[calc(100vh-76px)] w-full items-center justify-center"
+              aria-label="Memeriksa akses halaman"
+            >
+              <span className="text-sm text-gray-500">
+                Memeriksa akses...
+              </span>
+            </main>
+          )}
+        </div>
       </div>
     </div>
   );

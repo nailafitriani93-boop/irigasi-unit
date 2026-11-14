@@ -2,6 +2,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
+  getAreaScopeForUsername,
+  getDisplayNameForUsername,
+} from "@/lib/areaAccess";
+import {
   createSessionToken,
   SESSION_COOKIE_NAME,
   verifyPassword,
@@ -27,8 +31,7 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await db.query(
-      `SELECT id, name, username, gender, role_id, status, password_hash,
-              area_scope
+      `SELECT id, username, gender, role_id, status, password_hash
        FROM public.managed_users
        WHERE username = $1
        LIMIT 1`,
@@ -36,10 +39,14 @@ export async function POST(request: NextRequest) {
     );
 
     const user = result.rows[0];
+    const areaScope = getAreaScopeForUsername(user?.username);
+    const displayName = getDisplayNameForUsername(user?.username);
 
     if (
       !user ||
       user.status !== "Aktif" ||
+      !areaScope ||
+      !displayName ||
       !(await verifyPassword(password, user.password_hash))
     ) {
       return NextResponse.json(
@@ -51,7 +58,7 @@ export async function POST(request: NextRequest) {
     const token = createSessionToken({
       userId: String(user.id),
       username: String(user.username),
-      name: String(user.name),
+      name: displayName,
       roleId: String(user.role_id),
     });
 
@@ -60,11 +67,11 @@ export async function POST(request: NextRequest) {
       message: "Login berhasil.",
       user: {
         id: String(user.id),
-        name: String(user.name),
+        name: displayName,
         username: String(user.username),
         gender: String(user.gender),
         roleId: String(user.role_id),
-        areaScope: String(user.area_scope ?? "PG1"),
+        areaScope,
       },
     });
 

@@ -10,6 +10,7 @@ import {
   saveEquipmentRecord,
   type EquipmentRecord,
 } from "@/lib/irrigationEquipment";
+import { getMasterDataSnapshot } from "@/lib/masterData";
 
 export const runtime = "nodejs";
 
@@ -69,11 +70,10 @@ export async function POST(request: Request) {
       );
     }
 
-    const hasFullAreaAccess = access.session.roleId === "admin";
+    const hasFullAreaAccess = access.areaScope === "PG1";
     const saveAreaScope = hasFullAreaAccess
       ? "PG1"
       : access.areaScope;
-
     // =====================================================
     // 2. VALIDASI DATA SNAPSHOT
     // =====================================================
@@ -98,6 +98,13 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Snapshot data aset tidak valid." },
         { status: 400 },
+      );
+    }
+
+    if (await getMasterDataSnapshot()) {
+      return NextResponse.json(
+        { error: "Migrasi lokal tidak diizinkan setelah data master tahunan aktif." },
+        { status: 409 },
       );
     }
 

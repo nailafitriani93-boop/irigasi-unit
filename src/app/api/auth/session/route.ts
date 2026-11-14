@@ -2,6 +2,10 @@
 import { NextResponse } from "next/server";
 import { getAuthSession } from "@/lib/auth";
 import { db } from "@/lib/db";
+import {
+  getAreaScopeForUsername,
+  getDisplayNameForUsername,
+} from "@/lib/areaAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,13 +24,13 @@ export async function GET() {
     }
 
     const userResult = await db.query<{
-      area_scope: string;
+      username: string;
       role_id: string;
       role_name: string | null;
       access_pages: string[] | null;
       gender: string;
     }>(
-      `SELECT u.area_scope, u.role_id, r.name AS role_name,
+      `SELECT u.username, u.role_id, r.name AS role_name,
               u.access_pages, u.gender
        FROM public.managed_users u
        LEFT JOIN public.user_roles r ON r.id = u.role_id
@@ -35,9 +39,10 @@ export async function GET() {
       [session.userId],
     );
     const user = userResult.rows[0];
-    const areaScope = user?.area_scope;
+    const areaScope = getAreaScopeForUsername(user?.username);
+    const displayName = getDisplayNameForUsername(user?.username);
 
-    if (!areaScope) {
+    if (!user || !areaScope || !displayName) {
       return NextResponse.json(
         { authenticated: false },
         { status: 401, headers: { "Cache-Control": "no-store" } },
@@ -50,7 +55,7 @@ export async function GET() {
         user: {
           userId: session.userId,
           username: session.username,
-          name: session.name,
+          name: displayName,
           gender: user.gender,
           roleId: user.role_id,
           roleName: user.role_name,
