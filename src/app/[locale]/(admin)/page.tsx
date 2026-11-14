@@ -32,6 +32,7 @@ type DashboardSummary = {
 };
 type Series = { name: string; data: number[] }[];
 type EquipmentType = "Engine" | "Irrigator";
+type EquipmentEditContext = "readiness" | "calibration" | "capability";
 const BAR_CHART_DEFAULT_COLORS = ["#00B050", "#FFFF00", "#FF0000", "#FF0000"];
 const CAPABILITY_CHART_COLORS = ["#027a48", "#facc15", "#b42318"];
 type EquipmentRecord = {
@@ -336,6 +337,43 @@ function makeRows(
     return [
       area,
       ...valueColumns.map((column) => cell(`${column}${row}`)),
+    ];
+  });
+}
+
+function capabilityRows(
+  records: EquipmentRecord[],
+  equipmentType: EquipmentType,
+  dimension: "area" | "group",
+  labelColumn: string,
+  firstRow: number,
+  lastRow: number,
+  gradeColumns: string[],
+  scopeArea?: AreaScope,
+) {
+  return Array.from({ length: lastRow - firstRow + 1 }, (_, index) => {
+    const category = String(cell(`${labelColumn}${firstRow + index}`));
+    if (dimension === "area" && isRestrictedArea(category, scopeArea)) {
+      return [category, ...gradeColumns.map(() => "•••")];
+    }
+
+    return [
+      category,
+      ...gradeColumns.map((column) => {
+        const grade = String(cell(`${column}${firstRow - 1}`)).trim().toLowerCase();
+        return records.filter((record) => {
+          const matchesCategory =
+            dimension === "group"
+              ? getRecordGroup(record).trim().toLowerCase() === category.trim().toLowerCase()
+              : category.trim().toLowerCase() === "total" ||
+                record.area.trim().toLowerCase() === category.trim().toLowerCase();
+          return (
+            record.type === equipmentType &&
+            matchesCategory &&
+            (record.fields.Grade ?? "").trim().toLowerCase() === grade
+          );
+        }).length;
+      }),
     ];
   });
 }
@@ -1278,7 +1316,11 @@ function ReadinessTable({
   areaScope?: AreaScope;
   canViewDetails: boolean;
   onRestrictedClick: () => void;
-  onSaveRecord: (record: EquipmentRecord, fields: Record<string, string>) => Promise<boolean>;
+  onSaveRecord: (
+    record: EquipmentRecord,
+    fields: Record<string, string>,
+    context: EquipmentEditContext
+  ) => Promise<boolean>;
   onDeleteRecord: (record: EquipmentRecord) => Promise<boolean>;
   onAddRecord: (
     type: EquipmentType,
@@ -1372,6 +1414,7 @@ function ReadinessTable({
             </div>
             <EquipmentDetailTable
               records={selectedRecords}
+              notificationContext="readiness"
               template={
                 equipmentRecords.find(
                   (record) =>
@@ -1403,6 +1446,7 @@ function ReadinessTable({
 function EquipmentDetailTable({
   records,
   template,
+  notificationContext,
   selectedArea,
   selectedStatus,
   equipmentType,
@@ -1416,22 +1460,29 @@ function EquipmentDetailTable({
 }: {
   records: EquipmentRecord[];
   template: EquipmentRecord;
+  notificationContext: EquipmentEditContext;
   selectedArea: string;
   selectedStatus: string;
   equipmentType: EquipmentType;
   group: string;
-  onSaveRecord: (record: EquipmentRecord, fields: Record<string, string>) => Promise<boolean>;
+  onSaveRecord: (
+    record: EquipmentRecord,
+    fields: Record<string, string>,
+    context: EquipmentEditContext
+  ) => Promise<boolean>;
   onDeleteRecord: (record: EquipmentRecord) => Promise<boolean>;
   onAddRecord?: (fields: Record<string, string>) => Promise<boolean>;
   hideAssetActions?: boolean;
   availableRecords?: EquipmentRecord[];
   capabilityContext?: CapabilitySelection;
 }) {
+  const calibrationT = useTranslations("calibration");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [query, setQuery] = useState("");
   const [isAdding, setIsAdding] = useState(false);
   const [addDraft, setAddDraft] = useState<Record<string, string>>({});
+  const [editNotice, setEditNotice] = useState("");
   const codeField = getRecordCodeField(template);
   const statusField = getRecordStatusField(template);
   const groupField = equipmentType === "Engine" ? "Sumber Air" : "Tipe Irigator";
@@ -1515,6 +1566,15 @@ function EquipmentDetailTable({
           )}
         </div>
       </div>
+      {editNotice && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mx-5 mt-3 rounded-xl border border-success-200 bg-success-50 px-4 py-3 text-sm text-success-700 sm:mx-7 dark:border-success-800 dark:bg-success-900/20 dark:text-success-300"
+        >
+          {editNotice}
+        </div>
+      )}
       {onAddRecord && isAdding && (
         <form
           className="mx-5 my-4 space-y-4 rounded-2xl border border-[#dce9df] bg-[#f7faf7] p-4 sm:mx-7 sm:p-5 dark:border-gray-700 dark:bg-gray-800"
@@ -1705,6 +1765,7 @@ function EquipmentDetailTable({
                           <button
                             type="button"
                             onClick={() => {
+                              setEditNotice("");
                               setEditingId(id);
                               setDraft({
                                 ...Object.fromEntries(
@@ -1747,7 +1808,46 @@ function EquipmentDetailTable({
                             className="space-y-4"
                             onSubmit={async (event) => {
                               event.preventDefault();
-                              if (await onSaveRecord(record, draft)) setEditingId(null);
+                              const noticeField =
+                                notificationContext === "calibration"
+                                  ? "Kalibrasi"
+                                  : notificationContext === "readiness"
+                                    ? getRecordStatusField(record)
+                                    : notificationContext === "capability"
+                                      ? "Grade"
+                                      : null;
+                              const noticeFieldChanged =
+                                noticeField !== null &&
+                                (record.fields[noticeField] ?? "").trim().toLowerCase() !==
+                                  (draft[noticeField] ?? "").trim().toLowerCase();
+                              if (await onSaveRecord(record, draft, notificationContext)) {
+                                if (noticeFieldChanged && noticeField) {
+                                  const value = draft[noticeField]?.trim() ?? "";
+                                  const message =
+                                    notificationContext === "calibration"
+                                      ? calibrationT("statusUpdated", {
+                                          code: record.code,
+                                          status: value,
+                                        })
+                                      : notificationContext === "readiness"
+                                        ? calibrationT("readinessStatusUpdated", {
+                                            type: equipmentType,
+                                            code: record.code,
+                                            status: value,
+                                          })
+                                        : calibrationT("capabilityGradeUpdated", {
+                                            type: equipmentType,
+                                            code: record.code,
+                                            grade: value,
+                                          });
+                                  setEditNotice(message);
+                                } else if (notificationContext !== "calibration") {
+                                  setEditNotice(
+                                    calibrationT("recordUpdated", { code: record.code })
+                                  );
+                                }
+                                setEditingId(null);
+                              }
                             }}
                           >
                             <h5 className="font-semibold text-[#183b2b] dark:text-white">
@@ -1766,7 +1866,24 @@ function EquipmentDetailTable({
                                       ? "Keterangan / dipinjam oleh"
                                       : field
                                     : field}
-                                  {field === statusField ? (
+                                  {capabilityContext && field === "Grade" ? (
+                                    <select
+                                      value={draft[field] ?? ""}
+                                      onChange={(event) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: event.target.value,
+                                        }))
+                                      }
+                                      className={inputClass}
+                                    >
+                                      {["Good", "Average", "Poor"].map((grade) => (
+                                        <option key={grade} value={grade}>
+                                          {grade}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : field === statusField ? (
                                     <select
                                       value={draft[field] ?? ""}
                                       onChange={(event) =>
@@ -1882,7 +1999,11 @@ function CalibrationDetailModal({
   selection: CalibrationSelection | null;
   records: EquipmentRecord[];
   onClose: () => void;
-  onSaveRecord: (record: EquipmentRecord, fields: Record<string, string>) => Promise<boolean>;
+  onSaveRecord: (
+    record: EquipmentRecord,
+    fields: Record<string, string>,
+    context: EquipmentEditContext
+  ) => Promise<boolean>;
   onDeleteRecord: (record: EquipmentRecord) => Promise<boolean>;
 }) {
   if (!selection) return null;
@@ -1944,6 +2065,7 @@ function CalibrationDetailModal({
         </div>
         <EquipmentDetailTable
           records={matches}
+          notificationContext="calibration"
           template={template}
           selectedArea={selection.area}
           selectedStatus={selection.calibration}
@@ -2053,7 +2175,11 @@ function CapabilityDetailModal({
   selection: CapabilitySelection | null;
   records: EquipmentRecord[];
   onClose: () => void;
-  onSaveRecord: (record: EquipmentRecord, fields: Record<string, string>) => Promise<boolean>;
+  onSaveRecord: (
+    record: EquipmentRecord,
+    fields: Record<string, string>,
+    context: EquipmentEditContext
+  ) => Promise<boolean>;
   onDeleteRecord: (record: EquipmentRecord) => Promise<boolean>;
   onAddRecord: (
     type: EquipmentType,
@@ -2114,6 +2240,7 @@ function CapabilityDetailModal({
         <EquipmentDetailTable
           records={matches}
           availableRecords={records}
+          notificationContext="capability"
           template={
             records.find((record) => record.type === selection.equipmentType) ??
             EQUIPMENT_TEMPLATES.find(
@@ -2146,6 +2273,8 @@ function getRecordGroupField(type: EquipmentType) {
 }
 
 function CapabilityTables({
+  equipmentRecords,
+  equipmentType,
   areaRows,
   splitRows,
   labelColumn,
@@ -2157,6 +2286,8 @@ function CapabilityTables({
   onRestrictedClick,
   onValueClick,
 }: {
+  equipmentRecords: EquipmentRecord[];
+  equipmentType: EquipmentType;
   areaRows: number[];
   splitRows: number[];
   labelColumn: string;
@@ -2180,7 +2311,16 @@ function CapabilityTables({
           readinessCentered={centered}
           blueFirstColumn
           headers={[textCell(`${labelColumn}${areaFirst - 1}`), ...valueColumns.map((column) => textCell(`${column}${areaFirst - 1}`))]}
-          rows={makeRows(labelColumn, areaFirst, areaLast, valueColumns, scopeArea)}
+          rows={capabilityRows(
+            equipmentRecords,
+            equipmentType,
+            "area",
+            labelColumn,
+            areaFirst,
+            areaLast,
+            valueColumns,
+            scopeArea,
+          )}
           highlightLast
           restrictedAreas={restrictedAreasForScope(scopeArea)}
           onRestrictedClick={onRestrictedClick}
@@ -2200,7 +2340,15 @@ function CapabilityTables({
             readinessCentered={centered}
             blueFirstColumn
             headers={["Jenis", ...valueColumns.map((column) => textCell(`${column}${splitFirst - 1}`))]}
-            rows={makeRows(labelColumn, splitFirst, splitLast, valueColumns)}
+            rows={capabilityRows(
+              equipmentRecords,
+              equipmentType,
+              "group",
+              labelColumn,
+              splitFirst,
+              splitLast,
+              valueColumns,
+            )}
             onValueClick={
               canViewDetails
                 ? (row, grade) => onValueClick("group", String(row[0]), grade)
@@ -2599,7 +2747,8 @@ export default function DashboardPage() {
 
   const saveEquipmentRecord = async (
     record: EquipmentRecord,
-    fields: Record<string, string>
+    fields: Record<string, string>,
+    context: EquipmentEditContext
   ): Promise<boolean> => {
     if (isHistoricalDataset) {
       setEquipmentStorageError(masterDataT("historicalReadOnly"));
@@ -2635,13 +2784,29 @@ export default function DashboardPage() {
     };
     try {
       const saved = await requestEquipmentApi("PUT", updated);
+      const noticeField =
+        context === "calibration" && record.type === "Engine"
+          ? "Kalibrasi"
+          : context === "readiness"
+            ? getRecordStatusField(record)
+            : context === "capability"
+              ? "Grade"
+              : null;
+      const noticeFieldChanged =
+        noticeField !== null &&
+        (record.fields[noticeField] ?? "").trim().toLowerCase() !==
+          (fields[noticeField] ?? "").trim().toLowerCase();
       setEquipmentRecords((current) =>
         current.map((item) =>
           getEquipmentId(item) === getEquipmentId(record) ? saved : item
         )
       );
       setEquipmentStorageError("");
-      setEquipmentActionMessage(`Data ${record.code} berhasil diperbarui.`);
+      setEquipmentActionMessage(
+        noticeFieldChanged || context !== "calibration"
+          ? ""
+          : `Data ${record.code} berhasil diperbarui.`
+      );
       return true;
     } catch (error) {
       setEquipmentStorageError(
@@ -2763,30 +2928,6 @@ export default function DashboardPage() {
     { name: textCell("Q20"), data: [21, 22, 23].map((row) => numberCell(`Q${row}`)) },
   ];
 
-  const engineCapabilityArea: Series = [
-    { name: textCell("C27"), data: [28, 29, 30].map((row) => numberCell(`C${row}`)) },
-    { name: textCell("D27"), data: [28, 29, 30].map((row) => numberCell(`D${row}`)) },
-    { name: textCell("E27"), data: [28, 29, 30].map((row) => numberCell(`E${row}`)) },
-  ];
-
-  const engineCapabilitySource: Series = [
-    { name: textCell("C33"), data: [34, 35].map((row) => numberCell(`C${row}`)) },
-    { name: textCell("D33"), data: [34, 35].map((row) => numberCell(`D${row}`)) },
-    { name: textCell("E33"), data: [34, 35].map((row) => numberCell(`E${row}`)) },
-  ];
-
-  const irrigatorCapabilityArea: Series = [
-    { name: textCell("N27"), data: [28, 29, 30].map((row) => numberCell(`N${row}`)) },
-    { name: textCell("O27"), data: [28, 29, 30].map((row) => numberCell(`O${row}`)) },
-    { name: textCell("P27"), data: [28, 29, 30].map((row) => numberCell(`P${row}`)) },
-  ];
-
-  const irrigatorCapabilityType: Series = [
-    { name: textCell("N33"), data: [34, 35].map((row) => numberCell(`N${row}`)) },
-    { name: textCell("O33"), data: [34, 35].map((row) => numberCell(`O${row}`)) },
-    { name: textCell("P33"), data: [34, 35].map((row) => numberCell(`P${row}`)) },
-  ];
-
   const visibleEquipmentRecords = useMemo(
     () =>
       areaScope === "PG1"
@@ -2836,19 +2977,41 @@ export default function DashboardPage() {
               (record) =>
                 record.type === type &&
                 record.area.toLowerCase() === area.toLowerCase() &&
-                record.fields.Grade?.toLowerCase() === grade.toLowerCase(),
+                record.fields.Grade?.trim().toLowerCase() === grade.trim().toLowerCase(),
             ).length,
         ),
       };
     });
+  const groupedCapabilitySeries = (
+    type: EquipmentType,
+    labelColumn: string,
+    firstRow: number,
+    lastRow: number,
+    gradeColumns: string[],
+  ): Series =>
+    gradeColumns.map((column) => {
+      const grade = textCell(`${column}${firstRow - 1}`);
+      return {
+        name: grade,
+        data: Array.from({ length: lastRow - firstRow + 1 }, (_, index) => {
+          const group = String(cell(`${labelColumn}${firstRow + index}`));
+          return visibleEquipmentRecords.filter(
+            (record) =>
+              record.type === type &&
+              getRecordGroup(record).trim().toLowerCase() === group.trim().toLowerCase() &&
+              (record.fields.Grade ?? "").trim().toLowerCase() === grade.trim().toLowerCase(),
+          ).length;
+        }),
+      };
+    });
   const capabilityPercentage = (type: EquipmentType) => {
     const records = visibleEquipmentRecords.filter(
-      (record) => record.type === type && record.fields.Grade,
+      (record) => record.type === type && record.fields.Grade?.trim(),
     );
     if (!records.length) return 0;
     return (
       records.filter(
-        (record) => record.fields.Grade?.toLowerCase() === "good",
+        (record) => record.fields.Grade?.trim().toLowerCase() === "good",
       ).length / records.length
     );
   };
@@ -3128,10 +3291,12 @@ export default function DashboardPage() {
         <Panel
           title={textCell("B26")}
           titleIcon={<HeadingIcon><BarChart3 size={18} aria-hidden="true" /></HeadingIcon>}
-          titleAdornment={<PercentageValue value={areaScope === "PG1" ? numberCell("H26") : capabilityPercentage("Engine")} decimals={1} />}
+          titleAdornment={<PercentageValue value={capabilityPercentage("Engine")} decimals={1} />}
         >
           <div className="space-y-5">
             <CapabilityTables
+              equipmentRecords={visibleEquipmentRecords}
+              equipmentType="Engine"
               areaRows={[28, 31]}
               splitRows={[34, 35]}
               labelColumn="B"
@@ -3154,7 +3319,7 @@ export default function DashboardPage() {
               <BarChart
                 key={`engine-capability-area-${isAuthenticated}`}
                 categories={chartAreas}
-                series={areaScope === "PG1" ? engineCapabilityArea : scopedCapabilitySeries("Engine", ["C", "D", "E"])}
+                series={scopedCapabilitySeries("Engine", ["C", "D", "E"])}
                 colors={CAPABILITY_CHART_COLORS}
                 showTotals
                 height={245}
@@ -3177,7 +3342,7 @@ export default function DashboardPage() {
                 <BarChart
                   key={`engine-capability-type-${isAuthenticated}`}
                   categories={[34, 35].map((row) => textCell(`B${row}`))}
-                  series={engineCapabilitySource}
+                  series={groupedCapabilitySeries("Engine", "B", 34, 35, ["C", "D", "E"])}
                   colors={CAPABILITY_CHART_COLORS}
                   stacked
                   showTotals
@@ -3204,10 +3369,12 @@ export default function DashboardPage() {
         <Panel
           title={textCell("M26")}
           titleIcon={<HeadingIcon><BarChart3 size={18} aria-hidden="true" /></HeadingIcon>}
-          titleAdornment={<PercentageValue value={areaScope === "PG1" ? numberCell("S26") : capabilityPercentage("Irrigator")} decimals={0} />}
+          titleAdornment={<PercentageValue value={capabilityPercentage("Irrigator")} decimals={0} />}
         >
           <div className="space-y-5">
             <CapabilityTables
+              equipmentRecords={visibleEquipmentRecords}
+              equipmentType="Irrigator"
               areaRows={[28, 31]}
               splitRows={[34, 35]}
               labelColumn="M"
@@ -3230,7 +3397,7 @@ export default function DashboardPage() {
               <BarChart
                 key={`irrigator-capability-area-${isAuthenticated}`}
                 categories={chartAreas}
-                series={areaScope === "PG1" ? irrigatorCapabilityArea : scopedCapabilitySeries("Irrigator", ["N", "O", "P"])}
+                series={scopedCapabilitySeries("Irrigator", ["N", "O", "P"])}
                 colors={CAPABILITY_CHART_COLORS}
                 showTotals
                 height={245}
@@ -3253,7 +3420,7 @@ export default function DashboardPage() {
                 <BarChart
                   key={`irrigator-capability-type-${isAuthenticated}`}
                   categories={[34, 35].map((row) => textCell(`M${row}`))}
-                  series={irrigatorCapabilityType}
+                  series={groupedCapabilitySeries("Irrigator", "M", 34, 35, ["N", "O", "P"])}
                   colors={CAPABILITY_CHART_COLORS}
                   stacked
                   showTotals
