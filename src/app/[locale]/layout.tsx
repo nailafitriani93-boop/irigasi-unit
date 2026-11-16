@@ -5,15 +5,17 @@ import { type Locale, routing } from "@/i18n/routing";
 import "flatpickr/dist/flatpickr.css";
 import { NextIntlClientProvider } from "next-intl";
 import { setRequestLocale } from "next-intl/server";
-import { Outfit } from "next/font/google";
+import { Geist } from "next/font/google";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import "simplebar-react/dist/simplebar.min.css";
 import "swiper/css/bundle";
 import "../globals.css";
 
-const outfit = Outfit({
+const geist = Geist({
   subsets: ["latin"],
+  variable: "--font-geist-sans",
+  fallback: ["Segoe UI", "sans-serif"],
 });
 
 export const metadata: Metadata = {
@@ -47,12 +49,13 @@ export default async function RootLayout({
 
   return (
     <html
+      className={geist.variable}
       lang={locale}
       dir={isRtl(locale as Locale) ? "rtl" : "ltr"}
       translate="no"
       suppressHydrationWarning
     >
-      <body className={`${outfit.className} dark:bg-gray-900`}>
+      <body className="dark:bg-gray-900">
         <NextIntlClientProvider>
           <ThemeProvider>
             <SidebarProvider>{children}</SidebarProvider>

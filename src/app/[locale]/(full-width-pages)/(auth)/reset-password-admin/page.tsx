@@ -177,7 +177,7 @@ export default function AdminResetPasswordPage() {
               rgba(7, 32, 21, 0.48)
             ),
             url("/images/background/images1.jpg") center / cover no-repeat;
-          font-family: Arial, Helvetica, sans-serif;
+          font-family: var(--font-dashboard);
         }
 
         .ggf-reset-card {

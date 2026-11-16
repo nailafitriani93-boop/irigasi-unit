@@ -899,7 +899,7 @@ function BarChartView({
       height,
       stacked,
       toolbar: { show: false },
-      fontFamily: "Outfit, sans-serif",
+      fontFamily: "var(--font-dashboard)",
       foreColor: "#718078",
       animations: { enabled: true, speed: 650 },
       events: onDataPointClick
@@ -985,7 +985,7 @@ function BarChartView({
       },
       style: {
         fontSize: "11px",
-        fontFamily: "Outfit, sans-serif",
+        fontFamily: "var(--font-dashboard)",
       },
       y: {
         formatter: (value) => Number(value).toLocaleString("id-ID"),
@@ -1251,7 +1251,7 @@ function CalibrationPieChart({
         })
       : "0";
   const options: ApexOptions = {
-    chart: { type: "pie", fontFamily: "Outfit, sans-serif", toolbar: { show: false } },
+    chart: { type: "pie", fontFamily: "var(--font-dashboard)", toolbar: { show: false } },
     labels: visibleSlices.map((slice) => slice.label),
     colors: visibleSlices.map((slice) => slice.color),
     legend: {

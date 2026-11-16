@@ -243,7 +243,7 @@ export default function SignInForm() {
           overflow: hidden;
           color: #26372c;
           background: #173d2a;
-          font-family: Arial, Helvetica, sans-serif;
+          font-family: var(--font-dashboard);
         }
         .ggf-login-background {
           position: absolute;
