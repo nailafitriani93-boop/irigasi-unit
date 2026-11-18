@@ -117,9 +117,9 @@ export default function AdminLayout({
     <div className="min-h-screen w-full">
       <div className="w-full min-w-0">
         {!isInspectionPage && <AppHeader />}
-        <AppSidebar />
+        {!isInspectionPage && <AppSidebar />}
 
-        <div className="ps-16">
+        <div className={isInspectionPage ? "" : "ps-16"}>
           {accessDenied ? (
             <main
               className="flex min-h-[calc(100vh-76px)] w-full items-center justify-center p-4"

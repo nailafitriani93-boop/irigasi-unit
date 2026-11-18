@@ -17,7 +17,7 @@ const categories: {
   active: boolean;
   description?: string;
   available?: boolean;
-  href?: "/" | "/inspeksi";
+  href?: "/" | "https://audit5ririgasi.estatepg1.online/";
 }[] = [
   { label: "Inventarisasi Unit", Icon: Cog, active: true, href: "/" },
   {
@@ -32,7 +32,7 @@ const categories: {
     active: false,
     description: "Ringkasan biaya operasional irigasi (Tahap Pembuatan)",
   },
-  { label: "Inspeksi Irigasi", Icon: Droplets, active: false, available: true, href: "/inspeksi" },
+  { label: "Inspeksi Irigasi", Icon: Droplets, active: false, available: true, href: "https://audit5ririgasi.estatepg1.online/" },
 ];
 
 export default function AppSidebar() {
@@ -53,9 +53,12 @@ export default function AppSidebar() {
         <nav aria-label="Kategori dashboard" className="w-full">
           <ul className="flex flex-col items-center gap-1">
             {categories.map(({ label, Icon, active, description, available = false, href }) => {
-              const isActive = available
-                ? pathname === "/inspeksi"
-                : active && pathname !== "/inspeksi";
+              const isActive =
+                href === "https://audit5ririgasi.estatepg1.online/"
+                  ? false
+                  : available
+                    ? pathname === "/inspeksi"
+                    : active && pathname !== "/inspeksi";
               const iconClassName = `relative flex items-center justify-center rounded-xl transition-colors ${
                 isActive
                   ? "h-10 w-10 bg-success-700 text-white shadow-[0_0_8px_rgba(2,122,72,0.22)] group-hover:shadow-[0_0_10px_rgba(2,122,72,0.32)]"
@@ -76,7 +79,7 @@ export default function AppSidebar() {
                   <Icon size={20} aria-hidden="true" />
                 </>
               );
-              const icon = href ? (
+              const icon = href === "/" ? (
                 <Link
                   href={href}
                   aria-label={label}
@@ -85,6 +88,15 @@ export default function AppSidebar() {
                 >
                   {iconContents}
                 </Link>
+              ) : href ? (
+                <a
+                  href={href}
+                  target="_top"
+                  aria-label={label}
+                  className={iconClassName}
+                >
+                  {iconContents}
+                </a>
               ) : (
                 <span
                   role="img"
