@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedAreaScope, isAreaScope } from "@/lib/areaAccess";
 import { db } from "@/lib/db";
 import {
+  ensureCalibrationArchiveTable,
+  getCalibrationArchive,
+} from "@/lib/calibrationArchive";
+import {
   calculateCalibrationResults,
   type CalibrationInput,
   type CalibrationMeasurement,
@@ -166,12 +170,51 @@ function parseCalibration(value: unknown): CalibrationInput | null {
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const access = await getAuthenticatedAreaScope();
 
     if (!access) {
       return NextResponse.json({ error: "Autentikasi diperlukan." }, { status: 401 });
+    }
+
+    await ensureCalibrationArchiveTable();
+
+    const rawYear = new URL(request.url).searchParams.get("year");
+    if (rawYear !== null) {
+      const year = Number(rawYear);
+      if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+        return NextResponse.json({ error: "Tahun kalibrasi tidak valid." }, { status: 400 });
+      }
+
+      const archive = await getCalibrationArchive(year);
+      if (archive) {
+        if (!Array.isArray(archive.calibration_records)) {
+          throw new Error(`Arsip kalibrasi tahun ${year} tidak valid.`);
+        }
+        return NextResponse.json(
+          archive.calibration_records.filter(
+            (record) =>
+              isRecord(record) &&
+              (access.areaScope === "PG1" || record.area === access.areaScope),
+          ),
+          { headers: { "Cache-Control": "no-store" } },
+        );
+      }
+
+      const result = await db.query(
+        `SELECT ${calibrationColumns}
+         FROM public.irrigation_calibrations
+         WHERE ($1 = 'PG1' OR area = $1)
+           AND calibration_date >= make_date($2, 1, 1)
+           AND calibration_date < make_date($2 + 1, 1, 1)
+         ORDER BY calibration_date DESC, id DESC
+         LIMIT 200`,
+        [access.areaScope, year],
+      );
+      return NextResponse.json(result.rows, {
+        headers: { "Cache-Control": "no-store" },
+      });
     }
 
     const result = await db.query(
@@ -203,6 +246,8 @@ export async function POST(request: Request) {
     if (!access) {
       return NextResponse.json({ error: "Autentikasi diperlukan." }, { status: 401 });
     }
+
+    await ensureCalibrationArchiveTable();
 
     let body: unknown;
     try {

@@ -8,10 +8,10 @@ loadEnvConfig(process.cwd());
 
 const scrypt = promisify(scryptCallback);
 const areaUsers = [
-  { id: "user-area-11101", username: "11101", area: "PG1" },
-  { id: "user-area-11102", username: "11102", area: "Lakop" },
-  { id: "user-area-11103", username: "11103", area: "Kijung" },
-  { id: "user-area-11104", username: "11104", area: "Divisi 2" },
+  { id: "user-area-111101", username: "111101", area: "PG1" },
+  { id: "user-area-111102", username: "111102", area: "Lakop" },
+  { id: "user-area-111103", username: "111103", area: "Kijung" },
+  { id: "user-area-111104", username: "111104", area: "Divisi 2" },
 ];
 
 async function readHidden(prompt) {
@@ -71,8 +71,28 @@ async function hashPassword(password) {
 
 async function collectPasswords() {
   const passwords = new Map();
+  const environmentPasswords = {
+    "111101": process.env.PG1_PASSWORD,
+    "111102": process.env.LAKOP_PASSWORD,
+    "111103": process.env.KIJUNG_PASSWORD,
+    "111104": process.env.DIVISI2_PASSWORD,
+  };
 
   for (const user of areaUsers) {
+    if (environmentPasswords[user.username]) {
+      if (environmentPasswords[user.username].length < 8) {
+        throw new Error(
+          `Password untuk ${user.username} minimal harus 8 karakter.`,
+        );
+      }
+
+      passwords.set(
+        user.username,
+        await hashPassword(environmentPasswords[user.username]),
+      );
+      continue;
+    }
+
     let password;
 
     do {
@@ -113,6 +133,11 @@ try {
     await client.query("BEGIN");
     await client.query(
       `INSERT INTO public.user_roles (id, name, description)
+       VALUES ('admin', 'Admin', 'Mengelola dashboard, master data, rekap kecelakaan, dan manajemen user.')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await client.query(
+      `INSERT INTO public.user_roles (id, name, description)
        VALUES ('user', 'User', 'Mengakses dashboard sesuai cakupan area.')
        ON CONFLICT (id) DO NOTHING`,
     );
@@ -125,11 +150,24 @@ try {
     }
 
     for (const user of areaUsers) {
+      const roleId = user.username === "111101" ? "admin" : "user";
+      const accessPages =
+        roleId === "admin"
+          ? [
+              "dashboard",
+              "form-input-kecelakaan",
+              "rekap-kecelakaan",
+              "master-data",
+              "manajemen-user",
+              "profile",
+            ]
+          : ["dashboard"];
+
       await client.query(
         `INSERT INTO public.managed_users
          (id, name, username, role_id, status, password_hash,
           access_pages, area_scope, created_at, updated_at)
-         VALUES ($1, $2, $3, 'user', 'Aktif', $4, $5::jsonb, $6, NOW(), NOW())
+         VALUES ($1, $2, $3, $4, 'Aktif', $5, $6::jsonb, $7, NOW(), NOW())
          ON CONFLICT (username)
          DO UPDATE SET
            name = EXCLUDED.name,
@@ -143,15 +181,23 @@ try {
           user.id,
           user.area,
           user.username,
+          roleId,
           passwords.get(user.username),
-          JSON.stringify(["dashboard"]),
+          JSON.stringify(accessPages),
           user.area,
         ],
       );
     }
 
+    await client.query(
+      `UPDATE public.managed_users
+       SET status = 'Nonaktif', updated_at = NOW()
+       WHERE username = ANY($1::text[])`,
+      [["11112", "11113", "11114", "11115"]],
+    );
+
     await client.query("COMMIT");
-    console.log("Akun area 11101–11104 berhasil dibuat atau diperbarui.");
+    console.log("Akun area 111101–111104 berhasil dibuat atau diperbarui.");
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

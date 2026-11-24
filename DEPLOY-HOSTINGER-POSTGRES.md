@@ -1,159 +1,194 @@
-# Deploy Dashboard K3 ke Hostinger VPS + PostgreSQL
+# Tutorial Deploy Irigasi ke Hostinger VPS
 
-## 1. Di VPS: buat PostgreSQL
+Tutorial ini untuk project Next.js pada branch `main`, VPS Ubuntu 24.04, PostgreSQL lokal di VPS, dan domain `unitirigasi.estatepg1.online`.
+
+Jalankan perintah di bawah pada terminal VPS setelah masuk dengan:
 
 ```bash
-sudo apt update
-sudo apt install -y postgresql postgresql-contrib
-sudo systemctl enable --now postgresql
+ssh root@187.53.128.184
 ```
 
-Buat database dan user:
+Masukkan password VPS hanya saat diminta di terminal. Tutorial ini tidak mengubah konfigurasi SSH.
+
+## 1. Pasang kebutuhan aplikasi
+
+```bash
+apt update
+apt install -y git curl nginx postgresql postgresql-contrib
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+apt install -y nodejs
+node --version
+npm --version
+```
+
+Node.js harus versi 20.9 atau lebih baru.
+
+## 2. Buat database PostgreSQL
+
+Buat password database acak terlebih dahulu:
+
+```bash
+openssl rand -hex 24
+```
+
+Simpan hasilnya di password manager atau tempat aman milik Anda. Gunakan hasil yang sama untuk mengatur password role dan mengisi `.env.production`.
+
+Buat role database:
 
 ```bash
 sudo -u postgres psql
 ```
 
+Di prompt `psql`, jalankan:
+
 ```sql
-CREATE USER ggf_app WITH PASSWORD 'GANTI_PASSWORD_YANG_KUAT';
-CREATE DATABASE ggf_k3 OWNER ggf_app;
-\c ggf_k3
-GRANT ALL ON SCHEMA public TO ggf_app;
+CREATE ROLE irigasi_app LOGIN;
+\password irigasi_app
+CREATE DATABASE irigasi OWNER irigasi_app;
 \q
 ```
 
-Jalankan schema:
+Saat diminta oleh `\password`, masukkan password acak dari langkah di atas dua kali. Jangan kirim password ke chat atau commit ke GitHub.
+
+## 3. Ambil project dari GitHub
 
 ```bash
-psql "postgresql://ggf_app:GANTI_PASSWORD_YANG_KUAT@127.0.0.1:5432/ggf_k3" -f database.sql
+mkdir -p /var/www
+git clone --branch main https://github.com/nailafitriani93-boop/irigasi-unit.git /var/www/irigasi-unit
+cd /var/www/irigasi-unit
 ```
 
-Jika database sudah dibuat sebelumnya, jalankan kembali perintah tersebut setelah backup. Schema dibuat dengan `IF NOT EXISTS`; perintah ini menambahkan tabel `irrigation_equipment` untuk penyimpanan aset dashboard.
+Jika repository GitHub bersifat private dan `git clone` ditolak, hentikan langkah ini dan siapkan akses GitHub yang aman. Jangan menaruh token/password di URL clone atau mengirimkannya lewat chat.
 
-## 2. PostgreSQL jangan dibuka ke internet
-
-Pastikan PostgreSQL hanya listen localhost:
+## 4. Buat tabel database
 
 ```bash
-sudo -u postgres psql -c "SHOW config_file;"
-sudo nano /etc/postgresql/*/main/postgresql.conf
+psql -h 127.0.0.1 -U irigasi_app -d irigasi -W -f database.sql
 ```
 
-Pastikan:
+Masukkan password database saat diminta. PostgreSQL tetap digunakan dari VPS lokal; jangan membuka port `5432` ke internet.
 
-```conf
-listen_addresses = 'localhost'
-```
+## 5. Atur environment production
 
-Restart:
+Buat file:
 
 ```bash
-sudo systemctl restart postgresql
+nano .env.production
 ```
 
-Tidak perlu membuka port 5432 di firewall jika Next.js dan PostgreSQL berada di VPS yang sama.
-
-## 3. Pasang Node.js/Git
-
-```bash
-sudo apt update
-sudo apt install -y git curl
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-source ~/.bashrc
-nvm install 22
-nvm use 22
-node -v
-npm -v
-```
-
-## 4. Upload project
-
-Contoh menggunakan Git:
-
-```bash
-cd /var/www
-git clone URL_REPOSITORY_ANDA kecelakaan-kerja
-cd kecelakaan-kerja
-```
-
-Atau upload ZIP lalu extract.
-
-Install dependency:
-
-```bash
-npm install
-npm install pg
-```
-
-## 5. Environment
-
-Buat `.env.production`:
+Isi dengan nilai milik VPS. Untuk password database, gunakan hasil `openssl rand -hex 24` dari langkah 2:
 
 ```env
-DATABASE_URL=postgresql://ggf_app:GANTI_PASSWORD_YANG_KUAT@127.0.0.1:5432/ggf_k3
+DATABASE_URL=postgresql://irigasi_app:PASSWORD_DATABASE@127.0.0.1:5432/irigasi
 DATABASE_SSL=false
+SESSION_SECRET=ISI_DENGAN_SECRET_ACAK
+OTP_SECRET=ISI_DENGAN_SECRET_ACAK
 ```
 
-Jangan commit file `.env.production`.
+Buat dua secret terpisah menggunakan `openssl rand -hex 32`, lalu salin hasilnya ke `SESSION_SECRET` dan `OTP_SECRET`.
 
-## 6. Build dan jalankan
+Simpan file di nano dengan `Ctrl+O`, Enter, lalu `Ctrl+X`. Kunci izin file:
 
 ```bash
-npm run build
-npm run start
+chmod 600 .env.production
 ```
 
-Default Next.js berjalan di port 3000.
+Jangan unggah atau commit `.env.production`. Pengiriman email reset password memerlukan konfigurasi SMTP tambahan (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_APP_PASSWORD`, `SMTP_FROM`, dan `SMTP_SECURE`).
 
-Untuk production gunakan PM2:
+## 6. Install, build, dan siapkan akun admin
+
+```bash
+npm ci
+npm run build
+NODE_ENV=production npm run setup:admin-user
+```
+
+Saat diminta, buat password admin minimal 8 karakter. Input password tidak ditampilkan di terminal.
+
+Untuk membuat atau memperbarui akun area, jalankan bila memang diperlukan:
+
+```bash
+NODE_ENV=production npm run setup:area-users
+```
+
+## 7. Jalankan aplikasi dengan PM2
 
 ```bash
 npm install -g pm2
-pm2 start npm --name ggf-k3 -- start
+pm2 start npm --name irigasi-unit -- start
 pm2 save
 pm2 startup
 ```
 
-Jalankan command `pm2 startup` yang diberikan terminal.
-
-## 7. Reverse proxy
-
-Arahkan domain/subdomain ke `127.0.0.1:3000` menggunakan Nginx atau OpenLiteSpeed sesuai konfigurasi VPS.
-
-Yang dibuka ke internet:
-- HTTP 80
-- HTTPS 443
-- SSH 22 (sebaiknya dibatasi)
-
-Yang TIDAK perlu dibuka:
-- PostgreSQL 5432
-
-## 8. Tes API
-
-Di VPS:
+Jika `pm2 startup` menampilkan perintah lanjutan, jalankan perintah tersebut satu kali. Periksa aplikasi:
 
 ```bash
-curl http://127.0.0.1:3000/api/workers
-curl http://127.0.0.1:3000/api/accidents
+pm2 status
+curl -I http://127.0.0.1:3000
 ```
 
-Jika database masih kosong, response worker/accident akan berupa array kosong.
+## 8. Arahkan subdomain melalui Nginx
 
-## 9. Setelah deploy
+Di Cloudflare, pastikan ada record `A` dengan:
 
-Upload Excel melalui halaman Master Data.
+- **Name:** `unitirigasi`
+- **IPv4 address:** `187.53.128.184`
+- **Proxy:** aktif (awan oranye boleh tetap aktif)
 
-Data akan:
-- KIT baru -> INSERT
-- KIT yang sudah ada -> UPDATE
-- KIT lama yang tidak ada di Excel -> tetap ada
+Buat konfigurasi Nginx:
 
-Input kecelakaan akan langsung masuk PostgreSQL melalui `/api/accidents`.
+```bash
+cat > /etc/nginx/sites-available/irigasi-unit <<'EOF'
+server {
+    listen 80;
+    server_name unitirigasi.estatepg1.online;
 
-Data aset dashboard dibaca dan disimpan melalui `/api/irrigation-equipment`. Snapshot aset lama yang masih ada di browser akan dimigrasikan otomatis saat pengguna membuka dashboard setelah login; data tersebut dihapus dari browser hanya setelah migrasi berhasil.
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
 
-Dashboard membaca `/api/workers` dan `/api/accidents`, bukan localStorage.
+ln -s /etc/nginx/sites-available/irigasi-unit /etc/nginx/sites-enabled/irigasi-unit
+nginx -t
+systemctl reload nginx
+```
 
-## Catatan keamanan
+Pastikan firewall Hostinger mengizinkan HTTP `80` dan HTTPS `443`. Port database `5432` tidak perlu dibuka. Jika UFW aktif, izinkan SSH dan Nginx sebelum mengubah aturan firewall; jangan aktifkan UFW tanpa memastikan aturan SSH.
 
-Project template ini sebelumnya memiliki halaman Sign In, tetapi form Sign In bawaan masih berupa UI/template dan belum menjadi autentikasi server. Sebelum sistem dipakai publik, endpoint API perlu dilindungi autentikasi/otorisasi agar orang luar tidak dapat membaca atau mengubah data K3.
+## 9. Aktifkan HTTPS
+
+```bash
+apt install -y certbot python3-certbot-nginx
+certbot --nginx -d unitirigasi.estatepg1.online
+```
+
+Ikuti prompt Certbot dan pilih pengalihan HTTP ke HTTPS. Setelah sertifikat aktif, di Cloudflare atur **SSL/TLS encryption mode** ke **Full (strict)**.
+
+Tes:
+
+```bash
+curl -I https://unitirigasi.estatepg1.online
+```
+
+Buka `https://unitirigasi.estatepg1.online` di browser dan masuk menggunakan akun admin yang dibuat pada langkah 6.
+
+## 10. Update aplikasi berikutnya
+
+Setelah perubahan baru masuk ke branch `main` GitHub:
+
+```bash
+cd /var/www/irigasi-unit
+git pull --ff-only origin main
+npm ci
+npm run build
+pm2 restart irigasi-unit --update-env
+```
+
+UI online memakai kode dari branch `main`, sama dengan kode yang dibuild lokal. Isi database lokal dan database VPS tidak otomatis disalin satu sama lain.

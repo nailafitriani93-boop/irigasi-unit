@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedAreaScope } from "@/lib/areaAccess";
+import { ensureCalibrationArchiveTable } from "@/lib/calibrationArchive";
 import { db } from "@/lib/db";
 import {
   ensureMasterDataTable,
@@ -102,10 +103,12 @@ export async function POST(request: Request) {
       !workbook.Summary?.cells.B2 ||
       !workbook.EngineIrigasi ||
       !workbook.IrigatorIrigasi ||
+      String(workbook.KalibrasiEngine?.cells.B1 ?? "").trim().toLowerCase() !==
+        "engine" ||
       !workbook.PipaIrigasi
     ) {
       return NextResponse.json(
-        { error: "Workbook harus memuat sheet Summary, EngineIrigasi, IrigatorIrigasi, dan PipaIrigasi." },
+        { error: "Workbook harus memuat sheet Summary, EngineIrigasi, IrigatorIrigasi, KalibrasiEngine (kolom B: Engine), dan PipaIrigasi." },
         { status: 400 },
       );
     }
@@ -134,6 +137,7 @@ export async function POST(request: Request) {
     }
 
     await ensureMasterDataTable();
+    await ensureCalibrationArchiveTable();
     await ensureIrrigationEquipmentSeeded();
     const client = await db.connect();
     try {
@@ -181,6 +185,12 @@ export async function POST(request: Request) {
       for (const record of equipmentRecords) {
         await saveEquipmentRecord(client, record, "PG1");
       }
+      await client.query(
+        `UPDATE public.irrigation_calibration_year_archives
+         SET reset_applied = FALSE
+         WHERE reset_year = $1`,
+        [year],
+      );
 
       await client.query("COMMIT");
       return NextResponse.json(

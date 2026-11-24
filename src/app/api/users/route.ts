@@ -29,7 +29,9 @@ function formatUser(row: UserRow) {
     gender: row.gender,
     roleId: row.role_id,
     status: row.status,
-    accessPages: row.access_pages ?? [],
+    accessPages:
+      normalizeAccessPages(row.access_pages) ??
+      DEFAULT_ACCESS_PAGES,
     areaScope: row.area_scope,
   };
 }
@@ -48,6 +50,58 @@ function isUniqueError(error: unknown) {
     "code" in error &&
     error.code === "23505"
   );
+}
+
+const ALLOWED_ACCESS_PAGES = new Set([
+  "dashboard",
+  "manajemen-user",
+  "kalibrasi",
+  "master-data",
+  "master-unit",
+]);
+const DEFAULT_ACCESS_PAGES = [
+  "dashboard",
+  "manajemen-user",
+  "kalibrasi",
+  "master-data",
+  "master-unit",
+];
+
+function hasValidAccessPages(value: unknown) {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (page) =>
+        typeof page === "string" &&
+        ALLOWED_ACCESS_PAGES.has(page),
+    )
+  );
+}
+
+function normalizeAccessPages(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const aliases: Record<string, string> = {
+    dashboard: "dashboard",
+    "kelola user": "manajemen-user",
+    "kelola-user": "manajemen-user",
+    "manajemen user": "manajemen-user",
+    "manajemen-user": "manajemen-user",
+    "kalibrasi engine": "kalibrasi",
+    kalibrasi: "kalibrasi",
+    "master data": "master-data",
+    "master-data": "master-data",
+    "master unit": "master-unit",
+    "master-unit": "master-unit",
+  };
+
+  const normalized = value
+    .filter((page): page is string => typeof page === "string")
+    .map((page) => aliases[page.trim().toLowerCase()])
+    .filter((page): page is string => !!page);
+
+  if (normalized.length !== value.length) return null;
+  return [...new Set(normalized)];
 }
 
 export async function GET() {
@@ -92,7 +146,7 @@ export async function POST(request: Request) {
     const gender = body.gender;
     const roleId = body.roleId;
     const status = body.status;
-    const accessPages = body.accessPages;
+    const accessPages = normalizeAccessPages(body.accessPages);
     const areaScope = body.areaScope ?? "PG1";
     const password =
       typeof body.password === "string" ? body.password : "";
@@ -111,10 +165,7 @@ export async function POST(request: Request) {
       return errorResponse("Status user tidak valid.");
     }
 
-    if (
-      !Array.isArray(accessPages) ||
-      !accessPages.every((page: unknown) => typeof page === "string")
-    ) {
+    if (!hasValidAccessPages(accessPages)) {
       return errorResponse("Hak akses tidak valid.");
     }
 
@@ -198,6 +249,14 @@ async function updateUser(request: Request) {
       return errorResponse("ID user wajib diisi.");
     }
 
+    if (Object.prototype.hasOwnProperty.call(body, "accessPages")) {
+      const normalizedAccessPages = normalizeAccessPages(body.accessPages);
+      if (normalizedAccessPages === null) {
+        return errorResponse("Hak akses tidak valid.");
+      }
+      body.accessPages = normalizedAccessPages;
+    }
+
     // Hanya kolom yang ditentukan di bawah ini yang dapat diperbarui.
     const fields: Array<{
       key: string;
@@ -255,12 +314,7 @@ async function updateUser(request: Request) {
 
     if (
       Object.prototype.hasOwnProperty.call(body, "accessPages") &&
-      (
-        !Array.isArray(body.accessPages) ||
-        !body.accessPages.every(
-          (page: unknown) => typeof page === "string"
-        )
-      )
+      !hasValidAccessPages(body.accessPages)
     ) {
       return errorResponse("Hak akses tidak valid.");
     }

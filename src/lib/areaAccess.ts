@@ -12,10 +12,15 @@ const VALID_AREA_SCOPES: AreaScope[] = [
 const USERNAME_AREA_SCOPES: Record<string, AreaScope> = {
   "100001": "PG1",
   "100002": "PG1",
+  "100003": "PG1",
   "11101": "PG1",
   "11102": "Lakop",
   "11103": "Kijung",
   "11104": "Divisi 2",
+  "111101": "PG1",
+  "111102": "Lakop",
+  "111103": "Kijung",
+  "111104": "Divisi 2",
   "11112": "PG1",
   "11113": "Kijung",
   "11114": "Lakop",
@@ -37,6 +42,8 @@ export function getDisplayNameForUsername(
 
   const normalizedUsername = username.trim().toLowerCase();
   if (normalizedUsername === "100001") return "Admin";
+  if (normalizedUsername === "100002") return "Abdul Haris Siregar";
+  if (normalizedUsername === "100003") return "Arnum";
 
   return getAreaScopeForUsername(normalizedUsername);
 }

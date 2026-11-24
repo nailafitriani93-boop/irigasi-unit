@@ -5,6 +5,7 @@ import {
   BarChart3,
   Cog,
   Droplets,
+  Fuel,
   Menu,
   Ban,
   type LucideIcon,
@@ -32,6 +33,12 @@ const categories: {
     active: false,
     description: "Ringkasan biaya operasional irigasi (Tahap Pembuatan)",
   },
+  {
+    label: "Monitoring Solar",
+    Icon: Fuel,
+    active: false,
+    description: "Pemantauan solar irigasi (Tahap Pembuatan)",
+  },
   { label: "Inspeksi Irigasi", Icon: Droplets, active: false, available: true, href: "https://audit5ririgasi.estatepg1.online/" },
 ];
 
@@ -39,8 +46,8 @@ export default function AppSidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="fixed inset-y-0 start-0 z-99999 w-16 border-e border-gray-200 bg-white pt-[76px] dark:border-gray-800 dark:bg-gray-950">
-      <div className="flex flex-col items-center px-2 pt-4">
+    <aside className="fixed inset-y-0 start-0 z-99999 w-16 border-e border-gray-200 bg-white pt-6 dark:border-gray-800 dark:bg-gray-950">
+      <div className="flex flex-col items-center px-2 pt-0">
         <div
           aria-hidden="true"
           className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-success-700 shadow-theme-xs dark:border-gray-700 dark:bg-gray-900 dark:text-success-400"

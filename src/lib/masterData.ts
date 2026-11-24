@@ -223,11 +223,53 @@ export function parseEquipmentRecords(
   return records;
 }
 
+export function getCalibratedEngineCodes(
+  workbook: ParsedExcelWorkbook,
+): Set<string> | null {
+  const cells = workbook.KalibrasiEngine?.cells;
+  if (!cells) return null;
+
+  const codes = new Set<string>();
+  for (const [address, value] of Object.entries(cells)) {
+    const match = address.match(/^B(\d+)$/);
+    if (!match || Number(match[1]) < 2 || typeof value !== "string") continue;
+
+    const code = value.trim().toUpperCase();
+    if (code) codes.add(code);
+  }
+  return codes;
+}
+
+export function applyCalibrationStatusFromWorkbook(
+  records: EquipmentRecord[],
+  workbook: ParsedExcelWorkbook,
+) {
+  const calibratedEngineCodes = getCalibratedEngineCodes(workbook);
+  if (!calibratedEngineCodes) return records;
+
+  return records.map((record) =>
+    record.sheet === "EngineIrigasi" && record.type === "Engine"
+      ? {
+          ...record,
+          fields: {
+            ...record.fields,
+            Kalibrasi: calibratedEngineCodes.has(record.code.trim().toUpperCase())
+              ? "Sudah"
+              : "Belum",
+          },
+        }
+      : record,
+  );
+}
+
 export function equipmentRecordsFromSnapshot(
   snapshot: MasterDataSnapshot,
   areaScope: AreaScope,
 ) {
-  const records = parseEquipmentRecords(snapshot.workbook_data);
+  const records = applyCalibrationStatusFromWorkbook(
+    parseEquipmentRecords(snapshot.workbook_data),
+    snapshot.workbook_data,
+  );
   return areaScope === "PG1"
     ? records
     : records.filter((record) => record.area === areaScope);

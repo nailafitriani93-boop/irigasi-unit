@@ -55,6 +55,17 @@ async function readHidden(prompt) {
 }
 
 async function collectPassword() {
+  const environmentPassword = process.env.ADMIN_PASSWORD;
+  if (environmentPassword) {
+    if (environmentPassword.length < 8) {
+      throw new Error("Password Admin minimal harus 8 karakter.");
+    }
+
+    const salt = randomBytes(16).toString("hex");
+    const derivedKey = await scrypt(environmentPassword, salt, 64);
+    return `scrypt:${salt}:${derivedKey.toString("hex")}`;
+  }
+
   let password;
 
   do {
@@ -90,7 +101,7 @@ try {
   const existing = await pool.query(
     "SELECT id FROM public.managed_users WHERE username = '100001' LIMIT 1",
   );
-  const passwordHash = existing.rowCount ? null : await collectPassword();
+  const passwordHash = await collectPassword();
   const client = await pool.connect();
 
   try {
@@ -118,11 +129,12 @@ try {
          SET name = 'Admin',
              role_id = 'admin',
              status = 'Aktif',
+             password_hash = CASE WHEN $2::text <> '' THEN $2 ELSE password_hash END,
              access_pages = $1::jsonb,
              area_scope = 'PG1',
              updated_at = NOW()
          WHERE username = '100001'`,
-        [accessPages],
+        [accessPages, process.env.ADMIN_PASSWORD ? passwordHash : ""],
       );
     } else {
       await client.query(
@@ -138,7 +150,9 @@ try {
     await client.query("COMMIT");
     console.log("Akun 100001 sudah siap sebagai Admin dengan akses PG1.");
     console.log(
-      existing.rowCount
+      process.env.ADMIN_PASSWORD
+        ? "Password akun berhasil diatur."
+        : existing.rowCount
         ? "Password akun tidak diubah."
         : "Password awal akun Admin berhasil disiapkan.",
     );

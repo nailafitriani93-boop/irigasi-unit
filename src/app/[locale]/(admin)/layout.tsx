@@ -8,8 +8,9 @@ import { usePathname, useRouter } from "@/i18n/navigation";
 
 const ROUTE_ACCESS: Record<string, string> = {
   "/": "dashboard",
-  "/kalibrasi": "dashboard",
-  "/master-data": "dashboard",
+  "/kalibrasi": "kalibrasi",
+  "/master-data": "master-data",
+  "/master-unit": "master-unit",
   "/inspeksi": "dashboard",
   "/manajemen-user": "manajemen-user",
   "/profile": "profile",
@@ -51,14 +52,6 @@ export default function AdminLayout({
 
         const requiredAccess = ROUTE_ACCESS[pathname];
 
-        const isMasterDataManager =
-          pathname === "/master-data" &&
-          session.user.areaScope === "PG1";
-        if (pathname === "/master-data" && !isMasterDataManager) {
-          setAccessDenied(true);
-          return;
-        }
-
         // Pertahankan perilaku rute yang tidak tercantum di pemetaan.
         if (!requiredAccess) {
           setAuthorizedPath(pathname);
@@ -69,18 +62,8 @@ export default function AdminLayout({
           ? session.user.accessPages
           : [];
 
-        const hasFullPageAccess =
-          String(session.user.roleId).trim().toLowerCase() === "admin" ||
-          String(session.user.roleName).trim().toLowerCase() === "admin";
-        const isUserManager =
-          session.user.username === "100001" ||
-          session.user.username === "100002";
-
         if (
           pathname !== "/profile" &&
-          !hasFullPageAccess &&
-          !isUserManager &&
-          !isMasterDataManager &&
           !allowedPages.includes(requiredAccess)
         ) {
           setAccessDenied(true);

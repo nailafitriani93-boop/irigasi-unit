@@ -29,10 +29,9 @@ function isCalibrationStatusRecord(
 const AppHeader: React.FC = () => {
   const pathname = usePathname();
   const masterDataT = useTranslations("masterData");
+  const masterUnitT = useTranslations("masterUnit");
 
   const [allowedPages, setAllowedPages] = useState<string[]>([]);
-  const [isUserManager, setIsUserManager] = useState(false);
-  const [isMasterDataManager, setIsMasterDataManager] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
   const [isPortalLoading, setIsPortalLoading] = useState(false);
@@ -77,8 +76,6 @@ const AppHeader: React.FC = () => {
         if (!sessionResult?.authenticated || !sessionResult.user) {
           setIsLoggedIn(false);
           setAllowedPages(["dashboard"]);
-          setIsUserManager(false);
-          setIsMasterDataManager(false);
           setIsInitialized(true);
           return;
         }
@@ -89,20 +86,11 @@ const AppHeader: React.FC = () => {
             ? sessionResult.user.accessPages
             : DEFAULT_ACCESS_PAGES
         );
-        setIsUserManager(
-          sessionResult.user.username === "100001" ||
-            sessionResult.user.username === "100002" ||
-            String(sessionResult.user.roleId).toLowerCase() === "admin" ||
-            String(sessionResult.user.roleName).toLowerCase() === "admin",
-        );
-        setIsMasterDataManager(sessionResult.user.areaScope === "PG1");
         setIsInitialized(true);
       } catch {
         if (!cancelled) {
           setIsLoggedIn(false);
           setAllowedPages(["dashboard"]);
-          setIsUserManager(false);
-          setIsMasterDataManager(false);
           setIsInitialized(true);
         }
       }
@@ -203,17 +191,28 @@ const AppHeader: React.FC = () => {
     },
   ];
 
-  // Seluruh menu tetap terlihat; hak akses diperiksa saat halaman dibuka.
   const items = isInitialized
-    ? isMasterDataManager
-      ? [...allItems, { href: "/master-data" as const, label: masterDataT("nav"), access: "dashboard" }]
-      : allItems
+    ? [
+        ...allItems.filter((item) => allowedPages.includes(item.access)),
+        ...(allowedPages.includes("master-data")
+          ? [
+              {
+                href: "/master-data" as const,
+                label: masterDataT("nav"),
+                access: "master-data",
+              },
+            ]
+          : []),
+        ...(isLoggedIn && allowedPages.includes("master-unit")
+          ? [{ href: "/master-unit" as const, label: masterUnitT("nav"), access: "master-unit" }]
+          : []),
+      ]
     : [];
 
   const canManageUsers =
     isInitialized &&
     isLoggedIn &&
-    (isUserManager || allowedPages.includes("manajemen-user"));
+    allowedPages.includes("manajemen-user");
 
   return (
     <>
@@ -232,7 +231,12 @@ const AppHeader: React.FC = () => {
           </p>
         </div>
       )}
-      <header className="sticky top-0 z-99999 w-full bg-white">
+      <header
+        className={cn(
+          "z-99999 w-full bg-white",
+          pathname === "/master-unit" ? "static" : "sticky top-0",
+        )}
+      >
         <div className="mx-auto flex min-h-[76px] w-full items-center gap-4 ps-24 pe-4 py-2 sm:pe-6 xl:pe-9">
           <Link
             href="/"
@@ -271,7 +275,7 @@ const AppHeader: React.FC = () => {
             ) : (
               <div className="flex min-w-max items-stretch justify-start gap-1">
                 {items.map(({ href, label }) => {
-                  const active = pathname === href;
+                  const active = href !== null && pathname === href;
                   const isCalibrationLocked =
                     href === "/kalibrasi" && !isLoggedIn;
                   const showCalibrationCount =
@@ -288,7 +292,20 @@ const AppHeader: React.FC = () => {
                   );
 
                   return (
-                    isCalibrationLocked ? (
+                    href === null ? (
+                      <button
+                        key={label}
+                        type="button"
+                        disabled
+                        title={label}
+                        className={cn(
+                          itemClassName,
+                          "disabled:cursor-default disabled:opacity-100",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ) : isCalibrationLocked ? (
                       <button
                         key={href}
                         type="button"

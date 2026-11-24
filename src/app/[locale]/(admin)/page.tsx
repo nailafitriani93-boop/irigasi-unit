@@ -2,7 +2,15 @@
 
 import dynamic from "next/dynamic";
 import type { ApexOptions } from "apexcharts";
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import {
   BarChart3,
   Cable,
@@ -14,7 +22,6 @@ import {
 import { Modal } from "@/components/ui/modal";
 import DashboardSectionNav from "@/components/dashboard/DashboardSectionNav";
 import { AREA_SCOPES, type AreaScope } from "@/data/userData";
-import summaryData from "@/data/irrigationSummary.json";
 import { Link } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 
@@ -31,12 +38,14 @@ type CellValue = string | number;
 type DashboardSummary = {
   title: string;
   cells: Record<string, CellValue | undefined>;
+  hasMasterData: boolean;
+  pipeCells?: Record<string, CellValue | undefined>;
 };
 type Series = { name: string; data: number[] }[];
 type EquipmentType = "Engine" | "Irrigator";
 type EquipmentEditContext = "readiness" | "calibration" | "capability";
-const BAR_CHART_DEFAULT_COLORS = ["#00B050", "#FFFF00", "#FF0000", "#FF0000"];
-const CAPABILITY_CHART_COLORS = ["#027a48", "#facc15", "#b42318"];
+const BAR_CHART_DEFAULT_COLORS = ["#22c55e", "#facc15", "#fb923c", "#ef4444"];
+const CAPABILITY_CHART_COLORS = ["#22c55e", "#facc15", "#ef4444"];
 type EquipmentRecord = {
   sheet: string;
   type: string;
@@ -49,7 +58,11 @@ type EquipmentRecord = {
   fields: Record<string, string | undefined>;
 };
 
-let summary: DashboardSummary = { title: "", cells: {} };
+let summary: DashboardSummary = {
+  title: "",
+  cells: {},
+  hasMasterData: false,
+};
 
 function isDashboardSummary(value: unknown): value is DashboardSummary {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -59,6 +72,7 @@ function isDashboardSummary(value: unknown): value is DashboardSummary {
   const candidate = value as Record<string, unknown>;
   if (
     typeof candidate.title !== "string" ||
+    typeof candidate.hasMasterData !== "boolean" ||
     !candidate.cells ||
     typeof candidate.cells !== "object" ||
     Array.isArray(candidate.cells)
@@ -68,6 +82,17 @@ function isDashboardSummary(value: unknown): value is DashboardSummary {
 
   return Object.values(candidate.cells).every(
     (cell) => cell === undefined || typeof cell === "string" || typeof cell === "number",
+  ) && (
+    candidate.pipeCells === undefined ||
+    (typeof candidate.pipeCells === "object" &&
+      candidate.pipeCells !== null &&
+      !Array.isArray(candidate.pipeCells) &&
+      Object.values(candidate.pipeCells).every(
+        (cell) =>
+          cell === undefined ||
+          typeof cell === "string" ||
+          typeof cell === "number",
+      ))
   );
 }
 
@@ -180,6 +205,17 @@ function getRecordGroup(record: EquipmentRecord) {
     : record.fields["Tipe Irigator"] ?? record.group;
 }
 
+function isEquipmentTypeRecord(
+  record: EquipmentRecord,
+  equipmentType: EquipmentType,
+) {
+  return (
+    record.type === equipmentType &&
+    record.sheet ===
+      (equipmentType === "Engine" ? "EngineIrigasi" : "IrigatorIrigasi")
+  );
+}
+
 function getRecordStatusField(record: EquipmentRecord) {
   return record.type === "Engine" ? "Kondisi Engine" : "Kondisi Irigator";
 }
@@ -190,25 +226,22 @@ function getRecordCodeField(record: EquipmentRecord) {
 
 function readinessRows(
   records: EquipmentRecord[],
+  equipmentType: EquipmentType,
   group: string,
   firstRow: number,
   lastRow: number,
   labelColumn: string,
   columns: string[],
-  scopeArea?: AreaScope,
 ) {
   return Array.from({ length: lastRow - firstRow + 1 }, (_, index) => {
     const area = String(cell(`${labelColumn}${firstRow + index}`));
-    if (isRestrictedArea(area, scopeArea, false)) {
-      return [area, ...columns.map(() => "•••")];
-    }
-
     return [
       area,
       ...columns.map((column) => {
         const status = String(cell(`${column}${firstRow - 1}`));
         return records.filter(
           (record) =>
+            record.type === equipmentType &&
             getRecordGroup(record).toLowerCase() === group.toLowerCase() &&
             (area.toLowerCase() === "total" ||
               record.area.toLowerCase() === area.toLowerCase()) &&
@@ -224,11 +257,9 @@ function calibrationRows(
   firstRow: number,
   lastRow: number,
   group?: string,
-  scopeArea?: AreaScope
 ) {
-  return makeRows("M", firstRow, lastRow, ["N", "O", "P"], scopeArea, false).map((row) => {
+  return makeRows("M", firstRow, lastRow, ["N", "O", "P"]).map((row) => {
     const area = String(row[0]);
-    if (isRestrictedArea(area, scopeArea, false)) return row;
 
     const [calibrated, notCalibrated] = calibrationValues(records, area, group);
     const calibrationTotal = calibrated + notCalibrated;
@@ -250,7 +281,6 @@ function calibrationValues(
   const matchingRecords = records.filter(
     (record) =>
       record.type === "Engine" &&
-      record.status.toLowerCase() === "ready" &&
       (!group || getRecordGroup(record).toLowerCase() === group.toLowerCase()) &&
       (area.toLowerCase() === "total" ||
         record.area.toLowerCase() === area.toLowerCase()),
@@ -266,11 +296,6 @@ function calibrationValues(
 
 const cell = (address: string): CellValue =>
   (summary.cells as Record<string, CellValue | undefined>)[address] ?? "";
-
-const numberCell = (address: string) => {
-  const value = cell(address);
-  return typeof value === "number" ? value : Number(value) || 0;
-};
 
 const textCell = (address: string) => String(cell(address) ?? "");
 
@@ -326,16 +351,10 @@ function makeRows(
   firstRow: number,
   lastRow: number,
   valueColumns: string[],
-  scopeArea?: AreaScope,
-  restrictTotal = true,
 ) {
   return Array.from({ length: lastRow - firstRow + 1 }, (_, index) => {
     const row = firstRow + index;
     const area = String(cell(`${labelColumn}${row}`));
-    if (isRestrictedArea(area, scopeArea, restrictTotal)) {
-      return [area, ...valueColumns.map(() => "•••")];
-    }
-
     return [
       area,
       ...valueColumns.map((column) => cell(`${column}${row}`)),
@@ -351,14 +370,9 @@ function capabilityRows(
   firstRow: number,
   lastRow: number,
   gradeColumns: string[],
-  scopeArea?: AreaScope,
 ) {
   return Array.from({ length: lastRow - firstRow + 1 }, (_, index) => {
     const category = String(cell(`${labelColumn}${firstRow + index}`));
-    if (dimension === "area" && isRestrictedArea(category, scopeArea)) {
-      return [category, ...gradeColumns.map(() => "•••")];
-    }
-
     return [
       category,
       ...gradeColumns.map((column) => {
@@ -370,7 +384,7 @@ function capabilityRows(
               : category.trim().toLowerCase() === "total" ||
                 record.area.trim().toLowerCase() === category.trim().toLowerCase();
           return (
-            record.type === equipmentType &&
+            isEquipmentTypeRecord(record, equipmentType) &&
             matchesCategory &&
             (record.fields.Grade ?? "").trim().toLowerCase() === grade
           );
@@ -380,13 +394,73 @@ function capabilityRows(
   });
 }
 
-function pipeRows(firstRow: number, lastRow: number, scopeArea?: AreaScope) {
+function pipeRows(firstRow: number, lastRow: number) {
+  const pipeCells = summary.pipeCells;
+  if (pipeCells) {
+    const cellValue = (address: string): CellValue =>
+      pipeCells[address] ?? "";
+    const sourceRowNumbers = Array.from(
+      new Set(
+        Object.keys(pipeCells)
+          .map((address) => address.match(/^[A-H](\d+)$/))
+          .filter((match): match is RegExpMatchArray => match !== null)
+          .map((match) => Number(match[1]))
+          .filter((row) => row >= 2),
+      ),
+    ).sort((left, right) => left - right);
+    const uploadedRows = sourceRowNumbers
+      .filter(
+        (row) =>
+          String(cellValue(`A${row}`)).trim() &&
+          String(cellValue(`B${row}`)).trim(),
+      )
+      .map((row) => [
+        cellValue(`A${row}`),
+        cellValue(`B${row}`),
+        cellValue(`C${row}`),
+        cellValue(`D${row}`),
+        cellValue(`E${row}`),
+        cellValue(`F${row}`),
+        cellValue(`G${row}`),
+        cellValue(`H${row}`),
+      ]);
+
+    if (firstRow === 39 && lastRow === 47) {
+      return uploadedRows;
+    }
+
+    if (firstRow === 50 && lastRow === 53) {
+      const pipeTypes = Array.from(
+        new Set(uploadedRows.map((row) => String(row[1]))),
+      );
+      return pipeTypes.map((pipeType) => {
+        const typeRows = uploadedRows.filter(
+          (row) => String(row[1]) === pipeType,
+        );
+        return [
+          "Total",
+          pipeType,
+          typeRows[0]?.[2] ?? "",
+          ...[3, 4, 5, 6].map((column) =>
+            typeRows.reduce(
+              (sum, row) => sum + (Number(row[column]) || 0),
+              0,
+            ),
+          ),
+          typeRows.reduce(
+            (sum, row) => sum + (Number(row[7]) || 0),
+            0,
+          ),
+        ];
+      });
+    }
+  }
+
   return makeRows(
     "B",
     firstRow,
     lastRow,
     ["C", "E", "F", "G", "I", "J", "K"],
-    scopeArea,
   );
 }
 
@@ -502,33 +576,6 @@ function PipeStackedBarChart({
   );
 }
 
-function isRestrictedArea(
-  area: string,
-  scopeArea?: AreaScope,
-  restrictTotal = true,
-) {
-  const normalizedArea = area.trim().toLowerCase();
-  return Boolean(
-    scopeArea &&
-      ((restrictTotal && normalizedArea === "total") ||
-        (AREA_SCOPES.includes(area as AreaScope) &&
-          area !== "PG1" &&
-          normalizedArea !== scopeArea.toLowerCase())),
-  );
-}
-
-function restrictedAreasForScope(
-  scopeArea?: AreaScope,
-  restrictTotal = true,
-) {
-  return scopeArea
-    ? [
-        ...AREA_SCOPES.filter((area) => area !== "PG1" && area !== scopeArea),
-        ...(restrictTotal ? ["Total"] : []),
-      ]
-    : [];
-}
-
 function formatValue(value: CellValue) {
   if (value === "") return "";
   if (typeof value === "number") {
@@ -579,6 +626,25 @@ function readinessStatusStyle(status: string) {
   };
 }
 
+function readinessChartHeaderColor(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized.includes("fada") || normalized.includes("not ready")) {
+    return BAR_CHART_DEFAULT_COLORS[3];
+  }
+  if (normalized.includes("ready")) return BAR_CHART_DEFAULT_COLORS[0];
+  if (normalized.includes("perbaikan")) return BAR_CHART_DEFAULT_COLORS[1];
+  if (normalized.includes("dipinjam")) return BAR_CHART_DEFAULT_COLORS[2];
+  return undefined;
+}
+
+function capabilityChartHeaderColor(grade: string) {
+  const normalized = grade.toLowerCase();
+  if (normalized.includes("good")) return CAPABILITY_CHART_COLORS[0];
+  if (normalized.includes("average")) return CAPABILITY_CHART_COLORS[1];
+  if (normalized.includes("poor")) return CAPABILITY_CHART_COLORS[2];
+  return undefined;
+}
+
 function calibrationHeaderStyle(header: string, index: number) {
   if (index === 0) return "!bg-blue-700 !text-white";
 
@@ -608,6 +674,8 @@ function DataTable({
   readinessStyle = false,
   readinessLeftAligned = false,
   readinessCentered = false,
+  readinessChartColors = false,
+  capabilityChartColors = false,
   calibrationStyle = false,
   blueFirstColumn = false,
   greenHeader = false,
@@ -618,9 +686,8 @@ function DataTable({
   columnWidths,
   leftAlignedColumns = [],
   wrapColumns = [],
-  restrictedAreas = [],
+  interactiveAreas,
   onValueClick,
-  onRestrictedClick,
 }: {
   headers: string[];
   rows: CellValue[][];
@@ -630,6 +697,8 @@ function DataTable({
   readinessStyle?: boolean;
   readinessLeftAligned?: boolean;
   readinessCentered?: boolean;
+  readinessChartColors?: boolean;
+  capabilityChartColors?: boolean;
   calibrationStyle?: boolean;
   blueFirstColumn?: boolean;
   greenHeader?: boolean;
@@ -640,13 +709,12 @@ function DataTable({
   columnWidths?: string[];
   leftAlignedColumns?: number[];
   wrapColumns?: number[];
-  restrictedAreas?: string[];
+  interactiveAreas?: string[];
   onValueClick?: (row: CellValue[], header: string, headers: string[]) => void;
-  onRestrictedClick?: () => void;
 }) {
   return (
     <div className={`w-full ${readinessStyle ? "overflow-hidden" : "overflow-x-auto"} rounded-none border border-[#e5ebe7]`}>
-      <table className={`w-full border-collapse text-left ${readinessStyle ? "table-fixed text-[10px]" : dense ? "min-w-0 table-fixed text-[9px]" : `${columnWidths ? "min-w-[560px] table-fixed" : "min-w-[470px]"} text-[12px] sm:text-[13px]`}`}>
+      <table className={`w-full border-collapse text-left ${pipeHeader ? "min-w-0 table-fixed text-[8px]" : readinessStyle ? "table-fixed text-[10px]" : dense ? "min-w-0 table-fixed text-[9px]" : `${columnWidths ? "min-w-[560px] table-fixed" : "min-w-[470px]"} text-[12px] sm:text-[13px]`}`}>
         {(readinessStyle || columnWidths) && (
           <colgroup>
             {headers.map((_, index) => (
@@ -668,7 +736,14 @@ function DataTable({
             {headers.map((header, index) => (
               <th
                 key={`${header}-${index}`}
-                className={`${readinessStyle ? "px-1 py-1.5 text-[8px] leading-tight tracking-normal" : dense ? "px-1 py-1" : compact ? "px-2.5 py-2.5" : "px-3 py-2.5"} ${readinessStyle ? readinessCentered ? "whitespace-normal break-words" : "whitespace-nowrap" : dense ? "whitespace-normal break-words" : wrapColumns.includes(index) ? "whitespace-normal" : "whitespace-nowrap"} ${wrapColumns.includes(index) || dense ? "break-words" : ""} border-b font-semibold ${calibrationStyle ? "text-center" : readinessStyle ? readinessCentered ? "text-center" : readinessLeftAligned || index === 0 ? "text-left" : "text-right" : pipeHeader ? "text-center" : leftAlignedColumns.includes(index) || index === 0 ? "text-left" : "text-right"} ${readinessStyle ? `border-gray-200 uppercase dark:border-gray-700 ${blueFirstColumn && index === 0 ? "!bg-blue-700 !text-white" : calibrationStyle ? calibrationHeaderStyle(header, index) : index ? readinessStatusStyle(header).header : ""}` : pipeHeader ? `border-white/20 ${pipeHeaderStyle(header)}` : greenHeader ? "border-white/20 text-white" : "border-[#dce9df]"}`}
+                style={
+                  readinessChartColors && index > 0
+                    ? { backgroundColor: readinessChartHeaderColor(header) }
+                    : capabilityChartColors && index > 0
+                      ? { backgroundColor: capabilityChartHeaderColor(header) }
+                    : undefined
+                }
+                className={`${pipeHeader ? "px-0.5 py-1 text-[8px] leading-tight" : readinessStyle ? "px-1 py-1.5 text-[8px] leading-tight tracking-normal" : dense ? "px-1 py-1" : compact ? "px-2.5 py-2.5" : "px-3 py-2.5"} ${pipeHeader ? "whitespace-nowrap" : readinessStyle ? readinessCentered ? "whitespace-normal break-words" : "whitespace-nowrap" : dense ? "whitespace-normal break-words" : wrapColumns.includes(index) ? "whitespace-normal" : "whitespace-nowrap"} ${!pipeHeader && (wrapColumns.includes(index) || dense) ? "break-words" : ""} border-b ${pipeHeader ? "font-bold" : "font-semibold"} ${calibrationStyle ? "text-center" : readinessStyle ? readinessCentered ? "text-center" : readinessLeftAligned || index === 0 ? "text-left" : "text-right" : pipeHeader ? "text-center" : leftAlignedColumns.includes(index) || index === 0 ? "text-left" : "text-right"} ${readinessStyle ? `border-gray-200 uppercase dark:border-gray-700 ${blueFirstColumn && index === 0 ? "!bg-blue-700 !text-white" : calibrationStyle ? calibrationHeaderStyle(header, index) : index ? readinessStatusStyle(header).header : ""}` : pipeHeader ? `border-white/20 ${pipeHeaderStyle(header)}` : greenHeader ? "border-white/20 text-white" : "border-[#dce9df]"}`}
               >
                 {greenHeader && index ? (
                   <span className="inline-flex items-center justify-end gap-1.5">
@@ -696,12 +771,11 @@ function DataTable({
         <tbody>
           {rows.map((row, rowIndex) => {
             const isTotal = highlightLast && rowIndex === rows.length - 1;
-            const isRestricted =
-              restrictedAreas.length > 0 &&
-              !isTotal &&
-              restrictedAreas.some(
+            const isInteractiveRow =
+              !interactiveAreas ||
+              interactiveAreas.some(
                 (area) =>
-                  String(row[0]).toLowerCase() === area.toLowerCase()
+                  String(row[0]).trim().toLowerCase() === area.toLowerCase(),
               );
             return (
               <tr
@@ -714,9 +788,7 @@ function DataTable({
                     : rowIndex % 2 === 0
                       ? `border-t border-gray-100 bg-white text-gray-600 ${readinessStyle ? "transition-colors hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800/70" : ""}`
                       : `border-t border-gray-100 bg-gray-50/60 text-gray-600 ${readinessStyle ? "transition-colors hover:bg-gray-100/70 dark:border-gray-800 dark:bg-gray-800/30 dark:text-gray-300 dark:hover:bg-gray-800/70" : ""}`
-                } ${isRestricted ? "cursor-pointer" : ""}`}
-                onClick={isRestricted ? onRestrictedClick : undefined}
-                title={isRestricted ? "Anda tidak memiliki akses ke data area ini" : undefined}
+                }`}
               >
                 {row.map((value, colIndex) => {
                   if (
@@ -742,14 +814,14 @@ function DataTable({
                   <td
                     key={`${rowIndex}-${colIndex}`}
                     rowSpan={rowSpan}
-                    className={`${readinessStyle ? "px-1 py-1 text-[10px] leading-tight" : dense ? "px-1 py-1" : compact ? "px-2.5 py-2" : "px-3 py-2.5"} ${readinessStyle || dense || wrapColumns.includes(colIndex) ? "whitespace-normal" : "whitespace-nowrap"} ${dense || wrapColumns.includes(colIndex) ? "break-words" : ""} ${calibrationStyle ? "text-center" : readinessStyle ? readinessCentered ? "text-center" : readinessLeftAligned || colIndex === 0 ? "text-left font-medium" : "text-right" : pipeHeader ? "text-center" : leftAlignedColumns.includes(colIndex) || colIndex === 0 ? "text-left font-medium" : "text-right"} ${readinessStyle && (readinessCentered || colIndex === 0) ? "font-medium" : ""} ${colIndex ? "tabular-nums" : ""} ${readinessStyle ? "!bg-white !text-black dark:!bg-white dark:!text-black" : ""} ${isRestricted && colIndex > 0 ? "select-none blur-[5px]" : ""}`}
+                    className={`${pipeHeader ? "px-0.5 py-1" : readinessStyle ? "px-1 py-1 text-[10px] leading-tight" : dense ? "px-1 py-1" : compact ? "px-2.5 py-2" : "px-3 py-2.5"} ${pipeHeader ? "whitespace-nowrap" : readinessStyle || dense || wrapColumns.includes(colIndex) ? "whitespace-normal" : "whitespace-nowrap"} ${!pipeHeader && (dense || wrapColumns.includes(colIndex)) ? "break-words" : ""} ${calibrationStyle ? "text-center" : readinessStyle ? readinessCentered ? "text-center" : readinessLeftAligned || colIndex === 0 ? "text-left font-medium" : "text-right" : pipeHeader ? "text-center" : leftAlignedColumns.includes(colIndex) || colIndex === 0 ? "text-left font-medium" : "text-right"} ${readinessStyle && (readinessCentered || colIndex === 0) ? "font-medium" : ""} ${colIndex ? "tabular-nums" : ""} ${readinessStyle ? "!bg-white !text-black dark:!bg-white dark:!text-black" : ""} ${pipeHeader ? "font-bold !text-black" : ""}`}
                   >
                     {readinessStyle && colIndex === 0 ? (
                       <span className={`inline-flex max-w-full items-center ${calibrationStyle || readinessCentered ? "justify-center text-center" : "justify-start text-start"} break-words ${isTotal ? "font-semibold text-gray-800 dark:text-gray-100" : ""}`}>
                         {formatValue(value)}
                       </span>
                     ) : null}
-                    {!isRestricted &&
+                    {isInteractiveRow &&
                     onValueClick &&
                     colIndex > 0 &&
                     !percentageColumns.includes(colIndex) &&
@@ -763,9 +835,7 @@ function DataTable({
                       >
                         {formatValue(value)}
                       </button>
-                    ) : readinessStyle && colIndex === 0 ? null : isRestricted && colIndex > 0 ? (
-                      <span aria-hidden="true">•••</span>
-                    ) : percentageColumns.includes(colIndex) && typeof value === "number" ? (
+                    ) : readinessStyle && colIndex === 0 ? null : percentageColumns.includes(colIndex) && typeof value === "number" ? (
                       `${(value * 100).toLocaleString("id-ID", { minimumFractionDigits: percentageDecimals, maximumFractionDigits: percentageDecimals })}%`
                     ) : (
                       formatValue(value)
@@ -863,6 +933,7 @@ type BarChartProps = {
   height?: number;
   horizontal?: boolean;
   integerYAxisLabels?: boolean;
+  interactiveCategories?: string[];
   onDataPointClick?: (seriesIndex: number, dataPointIndex: number) => void;
 };
 
@@ -873,138 +944,220 @@ function BarChartView({
   stacked = false,
   showTotals = false,
   height = 260,
-  horizontal = false,
-  integerYAxisLabels = false,
+  interactiveCategories,
   onDataPointClick,
 }: BarChartProps) {
-  const onDataPointClickRef = useRef(onDataPointClick);
-  useEffect(() => {
-    onDataPointClickRef.current = onDataPointClick;
-  }, [onDataPointClick]);
-  const handleDataPointSelection = useCallback(
-    (_event: unknown, _chartContext: unknown, config?: { seriesIndex: number; dataPointIndex: number }) => {
-      if (config) {
-        onDataPointClickRef.current?.(config.seriesIndex, config.dataPointIndex);
-      }
-    },
-    []
+  const [hoveredPoint, setHoveredPoint] = useState<{
+    categoryIndex: number;
+    seriesIndex: number;
+  } | null>(null);
+  const totals = categories.map((_, categoryIndex) =>
+    series.reduce((sum, item) => sum + (item.data[categoryIndex] ?? 0), 0),
   );
-  const maxSeriesValue = Math.max(
+  const maxValue = Math.max(
     1,
-    ...series.flatMap((item) => item.data)
+    ...series.flatMap((item) => item.data),
+    ...(stacked ? totals : []),
   );
-  const options: ApexOptions = {
-    chart: {
-      type: "bar",
-      height,
-      stacked,
-      toolbar: { show: false },
-      fontFamily: "var(--font-dashboard)",
-      foreColor: "#718078",
-      animations: { enabled: true, speed: 650 },
-      events: onDataPointClick
-        ? {
-            dataPointSelection: handleDataPointSelection,
-          }
-        : undefined,
-    },
-    colors,
-    plotOptions: {
-      bar: {
-        horizontal,
-        columnWidth: "52%",
-        borderRadius: 3,
-        borderRadiusApplication: "end",
-        dataLabels: {
-          position: showTotals && !stacked ? "top" : undefined,
-          total: {
-            enabled: showTotals && stacked,
-            formatter: (value) => Number(value ?? 0).toLocaleString("id-ID"),
-            offsetY: 18,
-            style: {
-              color: "#365343",
-              fontSize: "11px",
-              fontWeight: 600,
-            },
-          },
-        },
-      },
-    },
-    dataLabels: {
-      enabled: showTotals && !stacked,
-      formatter: (value) => Number(value).toLocaleString("id-ID"),
-      offsetY: -16,
-      style: {
-        fontSize: "11px",
-        fontWeight: 600,
-        colors: ["#365343"],
-      },
-    },
-    stroke: { show: true, width: 1, colors: ["transparent"] },
-    xaxis: {
-      categories,
-      axisBorder: { show: false },
-      axisTicks: { show: false },
-      labels: { style: { fontSize: "11px" } },
-    },
-    yaxis: {
-      min: 0,
-      max: showTotals && !stacked ? maxSeriesValue * 1.15 : undefined,
-      forceNiceScale: true,
-      labels: {
-        style: { fontSize: "11px" },
-        formatter: integerYAxisLabels
-          ? (value) => Math.round(value).toLocaleString("id-ID")
-          : undefined,
-      },
-    },
-    grid: { borderColor: "#edf1ee", strokeDashArray: 3 },
-    legend: {
-      show: true,
-      position: "top",
-      horizontalAlign: "left",
-      fontSize: "11px",
-      markers: { size: 7 },
-      itemMargin: { horizontal: 9, vertical: 3 },
-    },
-    fill: { opacity: 1 },
-    states: {
-      hover: {
-        filter: {
-          type: "darken",
-          value: 0.12,
-        },
-      },
-    },
-    tooltip: {
-      theme: "light",
-      shared: false,
-      intersect: true,
-      marker: {
-        show: true,
-      },
-      style: {
-        fontSize: "11px",
-        fontFamily: "var(--font-dashboard)",
-      },
-      y: {
-        formatter: (value) => Number(value).toLocaleString("id-ID"),
-      },
-    },
-    responsive: [
-      {
-        breakpoint: 640,
-        options: {
-          chart: { height: Math.max(220, height - 25) },
-          legend: { fontSize: "10px", itemMargin: { horizontal: 5 } },
-        },
-      },
-    ],
-  };
+  const scaleMax = Math.max(
+    5,
+    Math.ceil((maxValue * (stacked ? 1.2 : 1)) / 5) * 5,
+  );
+  const ticks = Array.from({ length: 5 }, (_, index) =>
+    Math.round(scaleMax - (scaleMax / 4) * index),
+  );
 
   return (
     <DeferredChart height={height}>
-      <ReactApexChart options={options} series={series} type="bar" height={height} />
+      <div
+        role="group"
+        aria-label={`Grafik capability: ${categories.join(", ")}`}
+        className="flex min-w-0 flex-col"
+        style={{ height }}
+      >
+        <div className="mb-2 flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1">
+          {series.map((item, index) => (
+            <span
+              key={item.name}
+              className="flex items-center gap-1.5 text-[10px] font-medium text-[#53665a] dark:text-gray-300"
+            >
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ backgroundColor: colors[index % colors.length] }}
+                aria-hidden="true"
+              />
+              {item.name}
+            </span>
+          ))}
+        </div>
+        <div className="grid min-h-0 flex-1 grid-cols-[2rem_minmax(0,1fr)] gap-x-2">
+          <div className="flex flex-col justify-between pb-5 text-end text-[10px] tabular-nums text-[#87928b] dark:text-gray-500">
+            {ticks.map((tick, index) => (
+              <span key={index}>{tick.toLocaleString("id-ID")}</span>
+            ))}
+          </div>
+          <div
+            className="grid min-w-0 border-b border-s border-[#dce5de] dark:border-gray-700"
+            style={{
+              gridTemplateColumns: `repeat(${categories.length}, minmax(0, 1fr))`,
+              backgroundImage:
+                "linear-gradient(to bottom, #edf1ee 1px, transparent 1px)",
+              backgroundSize: "100% 25%",
+            }}
+          >
+            {categories.map((category, categoryIndex) => {
+              const total = totals[categoryIndex];
+              return (
+                <div
+                  key={`${category}-${categoryIndex}`}
+                  className="flex min-w-0 flex-col items-center justify-end px-1"
+                >
+                  <div className="relative flex h-full w-full items-end justify-center gap-1">
+                    {stacked ? (
+                      <div className="relative h-full w-3/5 max-w-16">
+                        {showTotals && total > 0 && (
+                          <span
+                            className="absolute inset-x-0 z-10 -translate-y-full text-center text-[10px] font-semibold tabular-nums text-[#365343] dark:text-gray-200"
+                            style={{ bottom: `${(total / scaleMax) * 100}%` }}
+                          >
+                            {total.toLocaleString("id-ID")}
+                          </span>
+                        )}
+                        <div
+                          className="readiness-bar-rise absolute inset-x-0 bottom-0 flex flex-col-reverse overflow-hidden rounded-t-md"
+                          style={{ height: `${(total / scaleMax) * 100}%` }}
+                        >
+                          {series.map((item, seriesIndex) => {
+                            const value = item.data[categoryIndex] ?? 0;
+                            if (!value || !total) return null;
+                            const canClick =
+                              onDataPointClick &&
+                              (!interactiveCategories ||
+                                interactiveCategories.some(
+                                  (area) =>
+                                    area.toLowerCase() ===
+                                    category.toLowerCase(),
+                                ));
+                            const tooltip = `${category} · ${item.name}: ${value.toLocaleString("id-ID")}`;
+                            return (
+                              <button
+                                key={item.name}
+                                type="button"
+                                aria-disabled={!canClick}
+                                tabIndex={canClick ? 0 : -1}
+                                aria-label={tooltip}
+                                onMouseEnter={() =>
+                                  setHoveredPoint({ categoryIndex, seriesIndex })
+                                }
+                                onMouseLeave={() => setHoveredPoint(null)}
+                                onFocus={() =>
+                                  setHoveredPoint({ categoryIndex, seriesIndex })
+                                }
+                                onBlur={() => setHoveredPoint(null)}
+                                onClick={() =>
+                                  canClick &&
+                                  onDataPointClick?.(seriesIndex, categoryIndex)
+                                }
+                                className="min-h-0 w-full shrink-0 border-t border-white/40 transition-[filter] hover:brightness-95"
+                                style={{
+                                  flexBasis: `${(value / total) * 100}%`,
+                                  backgroundColor: colors[seriesIndex % colors.length],
+                                }}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      series.map((item, seriesIndex) => {
+                        const value = item.data[categoryIndex] ?? 0;
+                        const canClick =
+                          onDataPointClick &&
+                          (!interactiveCategories ||
+                            interactiveCategories.some(
+                              (area) =>
+                                area.toLowerCase() === category.toLowerCase(),
+                            ));
+                        const tooltip = `${category} · ${item.name}: ${value.toLocaleString("id-ID")}`;
+                        return (
+                          <div
+                            key={item.name}
+                            className="flex h-full min-w-0 flex-1 flex-col items-center justify-end"
+                          >
+                            {showTotals && (
+                              <span className="mb-1 text-[9px] font-semibold tabular-nums text-[#365343] dark:text-gray-200">
+                                {value.toLocaleString("id-ID")}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              aria-disabled={!canClick}
+                              tabIndex={canClick ? 0 : -1}
+                              aria-label={tooltip}
+                              onMouseEnter={() =>
+                                setHoveredPoint({ categoryIndex, seriesIndex })
+                              }
+                              onMouseLeave={() => setHoveredPoint(null)}
+                              onFocus={() =>
+                                setHoveredPoint({ categoryIndex, seriesIndex })
+                              }
+                              onBlur={() => setHoveredPoint(null)}
+                              onClick={() =>
+                                canClick &&
+                                onDataPointClick?.(seriesIndex, categoryIndex)
+                              }
+                              className="readiness-bar-rise w-full max-w-10 rounded-t-sm transition-[filter] hover:brightness-95"
+                              style={{
+                                height: `${(value / scaleMax) * 100}%`,
+                                minHeight: value > 0 ? 2 : 0,
+                                backgroundColor: colors[seriesIndex % colors.length],
+                              }}
+                            />
+                          </div>
+                        );
+                      })
+                    )}
+                    {hoveredPoint?.categoryIndex === categoryIndex &&
+                      series[hoveredPoint.seriesIndex] && (
+                        <div
+                          role="status"
+                          className="pointer-events-none absolute z-50 -translate-x-1/2 whitespace-nowrap rounded-xl border border-[#dce9df] bg-white/95 px-3 py-2 shadow-[0_8px_24px_rgba(24,59,43,0.16)] backdrop-blur-sm dark:border-gray-700 dark:bg-gray-900"
+                          style={{
+                            left: `${stacked ? 50 : ((hoveredPoint.seriesIndex + 0.5) / series.length) * 100}%`,
+                            bottom: `calc(${((stacked ? total : series[hoveredPoint.seriesIndex].data[categoryIndex] ?? 0) / scaleMax) * 100}% + 0.5rem)`,
+                          }}
+                        >
+                          <span className="block text-[10px] leading-4 text-[#718078] dark:text-gray-400">
+                            {category}
+                          </span>
+                          <span className="flex items-baseline justify-between gap-3 text-[11px] font-semibold leading-4 text-[#365343] dark:text-gray-200">
+                            <span className="flex items-center gap-1.5">
+                              <span
+                                className="h-2 w-2 rounded-full"
+                                style={{
+                                  backgroundColor:
+                                    colors[hoveredPoint.seriesIndex % colors.length],
+                                }}
+                                aria-hidden="true"
+                              />
+                              {series[hoveredPoint.seriesIndex].name}
+                            </span>
+                            <span className="font-bold tabular-nums text-[#183b2b] dark:text-white">
+                              {series[hoveredPoint.seriesIndex].data[categoryIndex]?.toLocaleString("id-ID")}
+                            </span>
+                          </span>
+                        </div>
+                      )}
+                  </div>
+                  <span className="mt-1 h-4 max-w-full truncate text-center text-[10px] font-medium text-[#53665a] dark:text-gray-300">
+                    {category}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
     </DeferredChart>
   );
 }
@@ -1022,6 +1175,11 @@ function areBarChartPropsEqual(previous: BarChartProps, next: BarChartProps) {
     previous.height === next.height &&
     previous.horizontal === next.horizontal &&
     previous.integerYAxisLabels === next.integerYAxisLabels &&
+    (previous.interactiveCategories ?? []).length ===
+      (next.interactiveCategories ?? []).length &&
+    (previous.interactiveCategories ?? []).every(
+      (category, index) => category === next.interactiveCategories?.[index],
+    ) &&
     Boolean(previous.onDataPointClick) === Boolean(next.onDataPointClick) &&
     previous.categories.length === next.categories.length &&
     previous.categories.every((category, index) => category === next.categories[index]) &&
@@ -1041,10 +1199,14 @@ function SummaryReadinessChart({
   categories,
   series,
   height = 420,
+  canInteract,
+  interactiveAreas,
 }: {
   categories: string[];
   series: Series;
   height?: number;
+  canInteract: boolean;
+  interactiveAreas?: string[];
 }) {
   const [hoveredPoint, setHoveredPoint] = useState<{
     categoryIndex: number;
@@ -1054,12 +1216,23 @@ function SummaryReadinessChart({
     categoryIndex: number;
     seriesIndex: number;
   } | null>(null);
-  const activePoint = hoveredPoint ?? selectedPoint;
+  const activePointCandidate = hoveredPoint ?? selectedPoint;
+  const activePoint =
+    activePointCandidate &&
+    canInteract &&
+    (!interactiveAreas ||
+      interactiveAreas.some(
+        (area) =>
+          area.toLowerCase() ===
+          categories[activePointCandidate.categoryIndex]?.toLowerCase(),
+      ))
+      ? activePointCandidate
+      : null;
   const colors = [
-    "var(--color-success-700)",
-    "var(--color-yellow-400)",
-    "var(--color-orange-500)",
-    "var(--color-error-700)",
+    "#22c55e",
+    "#facc15",
+    "#fb923c",
+    "#ef4444",
   ];
   const totals = categories.map((_, index) =>
     series.reduce((sum, item) => sum + (item.data[index] ?? 0), 0)
@@ -1125,10 +1298,19 @@ function SummaryReadinessChart({
                       <div className="flex h-full w-full flex-col-reverse overflow-hidden rounded-t-lg">
                         {series.map((item, seriesIndex) => {
                           const value = item.data[categoryIndex] ?? 0;
+                          const areaCanInteract =
+                            canInteract &&
+                            (!interactiveAreas ||
+                              interactiveAreas.some(
+                                (area) =>
+                                  area.toLowerCase() ===
+                                  category.toLowerCase(),
+                              ));
                           return value > 0 ? (
                           <button
                             key={item.name}
                             type="button"
+                            disabled={!areaCanInteract}
                             aria-label={`${category}, ${item.name}: ${value} unit`}
                             aria-pressed={
                               activePoint?.categoryIndex === categoryIndex &&
@@ -1139,7 +1321,11 @@ function SummaryReadinessChart({
                               flexBasis: `${(value / totals[categoryIndex]) * 100}%`,
                               backgroundColor: colors[seriesIndex % colors.length],
                             }}
-                            className={`flex min-h-0 w-full shrink-0 cursor-pointer items-center justify-center overflow-hidden border-b border-white/35 text-[9px] font-bold tabular-nums transition-[filter,opacity] duration-200 hover:z-10 hover:brightness-110 focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#07813e] ${
+                            className={`flex min-h-0 w-full shrink-0 items-center justify-center overflow-hidden border-b border-white/35 text-[9px] font-bold tabular-nums transition-[filter,opacity] duration-200 ${
+                              areaCanInteract
+                                ? "cursor-pointer hover:z-10 hover:brightness-110 focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#07813e]"
+                                : "cursor-default"
+                            } ${
                               seriesIndex === 1 ? "text-[#593b00]" : "text-white"
                             } ${
                               activePoint &&
@@ -1148,11 +1334,27 @@ function SummaryReadinessChart({
                                 ? "opacity-55"
                                 : "opacity-100"
                             }`}
-                            onMouseEnter={() => setHoveredPoint({ categoryIndex, seriesIndex })}
-                            onMouseLeave={() => setHoveredPoint(null)}
-                            onFocus={() => setHoveredPoint({ categoryIndex, seriesIndex })}
-                            onBlur={() => setHoveredPoint(null)}
-                            onClick={() => setSelectedPoint({ categoryIndex, seriesIndex })}
+                            onMouseEnter={
+                              areaCanInteract
+                                ? () => setHoveredPoint({ categoryIndex, seriesIndex })
+                                : undefined
+                            }
+                            onMouseLeave={
+                              areaCanInteract ? () => setHoveredPoint(null) : undefined
+                            }
+                            onFocus={
+                              areaCanInteract
+                                ? () => setHoveredPoint({ categoryIndex, seriesIndex })
+                                : undefined
+                            }
+                            onBlur={
+                              areaCanInteract ? () => setHoveredPoint(null) : undefined
+                            }
+                            onClick={
+                              areaCanInteract
+                                ? () => setSelectedPoint({ categoryIndex, seriesIndex })
+                                : undefined
+                            }
                           >
                           </button>
                           ) : null;
@@ -1211,31 +1413,13 @@ function SummaryReadinessChart({
 function CalibrationPieChart({
   label,
   values,
-  restricted = false,
-  onRestrictedClick,
 }: {
   label: string;
   values: number[];
-  restricted?: boolean;
-  onRestrictedClick?: () => void;
 }) {
-  if (restricted) {
-    return (
-      <button
-        type="button"
-        onClick={onRestrictedClick}
-        title="Anda tidak memiliki akses ke data area ini"
-        aria-label={`Anda tidak memiliki akses ke data area ${label}`}
-        className="flex h-[225px] w-full cursor-pointer items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-2xl text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
-      >
-        <span aria-hidden="true" className="select-none blur-[5px]">•••</span>
-      </button>
-    );
-  }
-
   const total = values.reduce((sum, value) => sum + value, 0);
   const calibrationLabels = [textCell("C54"), textCell("D54")];
-  const calibrationColors = ["#00B050", "#FF0000"];
+  const calibrationColors = ["#22c55e", "#ef4444"];
   const visibleSlices = values
     .map((value, index) => ({
       value,
@@ -1301,9 +1485,8 @@ function ReadinessTable({
   labelColumn = "B",
   equipmentType,
   equipmentRecords,
-  areaScope,
+  interactiveAreas,
   canViewDetails,
-  onRestrictedClick,
   onSaveRecord,
   onDeleteRecord,
   onAddRecord,
@@ -1315,9 +1498,8 @@ function ReadinessTable({
   labelColumn?: string;
   equipmentType: EquipmentType;
   equipmentRecords: EquipmentRecord[];
-  areaScope?: AreaScope;
+  interactiveAreas?: string[];
   canViewDetails: boolean;
-  onRestrictedClick: () => void;
   onSaveRecord: (
     record: EquipmentRecord,
     fields: Record<string, string>,
@@ -1354,13 +1536,13 @@ function ReadinessTable({
         compact
         readinessStyle
         readinessCentered
+        readinessChartColors
         blueFirstColumn
         columnWidths={["22%", "18%", "22%", "21%", "17%"]}
         headers={[textCell(`${labelColumn}${firstRow - 1}`), ...columns.map((column) => textCell(`${column}${firstRow - 1}`))]}
-        rows={readinessRows(equipmentRecords, title, firstRow, lastRow, labelColumn, columns, areaScope)}
+        rows={readinessRows(equipmentRecords, equipmentType, title, firstRow, lastRow, labelColumn, columns)}
         highlightLast
-        restrictedAreas={restrictedAreasForScope(areaScope, false)}
-        onRestrictedClick={onRestrictedClick}
+        interactiveAreas={interactiveAreas}
         onValueClick={
           canViewDetails
             ? (row, status) => setSelected({ area: String(row[0]), status })
@@ -1416,6 +1598,7 @@ function ReadinessTable({
             </div>
             <EquipmentDetailTable
               records={selectedRecords}
+              availableRecords={equipmentRecords}
               notificationContext="readiness"
               template={
                 equipmentRecords.find(
@@ -1441,6 +1624,112 @@ function ReadinessTable({
           </div>
         )}
       </Modal>
+    </div>
+  );
+}
+
+function SearchableEditDropdown({
+  value,
+  options,
+  placeholder,
+  ariaLabel,
+  searchable = false,
+  onChange,
+}: {
+  value: string;
+  options: string[];
+  placeholder: string;
+  ariaLabel: string;
+  searchable?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const listboxId = useId();
+  const filteredOptions = searchable
+    ? options.filter((option) =>
+        option.toLowerCase().includes(search.trim().toLowerCase()),
+      )
+    : options;
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const closeOnOutsideInteraction = (event: PointerEvent) => {
+      if (
+        !(event.target instanceof Node) ||
+        !dropdownRef.current?.contains(event.target)
+      ) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsideInteraction);
+    return () =>
+      document.removeEventListener("pointerdown", closeOnOutsideInteraction);
+  }, [isOpen]);
+
+  return (
+    <div ref={dropdownRef} className="relative mt-1">
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        aria-controls={listboxId}
+        onClick={() => {
+          setSearch("");
+          setIsOpen((open) => !open);
+        }}
+        className="flex h-9 w-full items-center justify-between rounded-lg border border-[#dce5de] bg-white px-2.5 text-start text-xs text-[#365343] outline-none focus:border-[#07813e] focus:ring-2 focus:ring-[#07813e]/15 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+      >
+        <span className="truncate">{value || placeholder}</span>
+        <ChevronDown size={14} aria-hidden="true" />
+      </button>
+      {isOpen && (
+        <div className="absolute start-0 top-full z-99 mt-1 w-full rounded-lg border border-[#dce5de] bg-white p-2 shadow-theme-lg dark:border-gray-600 dark:bg-gray-900">
+          {searchable && (
+            <input
+              autoFocus
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={`Cari ${ariaLabel.toLowerCase()}...`}
+              aria-label={`Cari ${ariaLabel.toLowerCase()}`}
+              className="h-9 w-full rounded-lg border border-[#dce5de] bg-white px-2.5 text-xs text-[#365343] outline-none focus:border-[#07813e] focus:ring-2 focus:ring-[#07813e]/15 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+            />
+          )}
+          <div
+            id={listboxId}
+            role="listbox"
+            aria-label={ariaLabel}
+            className={`${searchable ? "mt-1 " : ""}max-h-32 overflow-y-auto`}
+          >
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  role="option"
+                  aria-selected={value === option}
+                  onClick={() => {
+                    onChange(option);
+                    setIsOpen(false);
+                  }}
+                  className="block w-full px-3 py-2 text-start text-xs text-[#365343] hover:bg-[#f2f8f3] focus-visible:outline focus-visible:outline-2 focus-visible:outline-success-600 dark:text-gray-100 dark:hover:bg-gray-800"
+                >
+                  {option}
+                </button>
+              ))
+            ) : (
+              <p className="px-3 py-2 text-xs text-[#718078] dark:text-gray-400">
+                Tidak ada pilihan.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1482,6 +1771,7 @@ function EquipmentDetailTable({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [isAdding, setIsAdding] = useState(false);
   const [addDraft, setAddDraft] = useState<Record<string, string>>({});
   const [editNotice, setEditNotice] = useState("");
@@ -1523,11 +1813,48 @@ function EquipmentDetailTable({
         .filter(Boolean)
     )
   );
-  const filteredRecords = records.filter((record) =>
-    [record.code, record.area, record.status, record.note, ...Object.values(record.fields)]
+  const irrigatorCodes = Array.from(
+    new Set(
+        availableRecords
+          .filter(
+            (record) =>
+              record.sheet === "IrigatorIrigasi" && record.type === "Irrigator",
+          )
+          .map((record) => record.code.trim())
+          .filter(Boolean),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+  const engineCodes = Array.from(
+    new Set(
+    availableRecords
+      .filter(
+        (record) =>
+          record.sheet === "EngineIrigasi" && record.type === "Engine",
+      )
+      .map((record) => record.code.trim())
+      .filter(Boolean),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+  const engineTypes = Array.from(
+    new Set(
+    availableRecords
+      .filter(
+        (record) =>
+          record.sheet === "EngineIrigasi" && record.type === "Engine",
+      )
+      .map((record) => record.fields["Tipe Engine"]?.trim() ?? "")
+      .filter(Boolean),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+  const filteredRecords = records.filter((record) => {
+    const matchesSearch = [record.code, record.area, record.status, record.note, ...Object.values(record.fields)]
       .filter(Boolean)
-      .some((value) => value?.toLowerCase().includes(query.trim().toLowerCase()))
-  );
+      .some((value) => value?.toLowerCase().includes(query.trim().toLowerCase()));
+    const matchesStatus =
+      statusFilter === "all" ||
+      record.status.toLowerCase() === statusFilter.toLowerCase();
+    return matchesSearch && matchesStatus;
+  });
   const inputClass =
     "mt-1 h-9 w-full rounded-lg border border-[#dce5de] bg-white px-2.5 text-xs text-[#365343] outline-none focus:border-[#07813e] focus:ring-2 focus:ring-[#07813e]/15 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100";
 
@@ -1551,6 +1878,20 @@ function EquipmentDetailTable({
               placeholder="Cari kode, area, atau keterangan..."
               className="h-10 w-64 max-w-full rounded-xl border border-[#dce5de] bg-[#fbfcfb] px-3 text-xs text-[#365343] outline-none transition focus:border-[#07813e] focus:ring-2 focus:ring-[#07813e]/15 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
             />
+          </label>
+          <label>
+            <span className="sr-only">Filter kondisi unit</span>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="h-10 rounded-xl border border-[#dce5de] bg-[#fbfcfb] px-3 text-xs text-[#365343] outline-none transition focus:border-[#07813e] focus:ring-2 focus:ring-[#07813e]/15 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            >
+              <option value="all">Semua Kondisi</option>
+              <option value="Ready">Ready</option>
+              <option value="Perbaikan">Perbaikan</option>
+              <option value="Dipinjam">Dipinjam</option>
+              <option value="FADA">FADA</option>
+            </select>
           </label>
           {onAddRecord && !hideAssetActions && (
             <button
@@ -1856,7 +2197,26 @@ function EquipmentDetailTable({
                               Edit data {record.code}
                             </h5>
                             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                              {Object.keys(draft).map((field) => (
+                              {Object.keys(draft)
+                                .filter(
+                                  (field) =>
+                                    !(
+                                      (notificationContext === "readiness" &&
+                                        ((equipmentType === "Engine" &&
+                                          ["Grade", "Kalibrasi"].includes(field)) ||
+                                          (equipmentType === "Irrigator" &&
+                                            field === "Grade"))) ||
+                                      (notificationContext === "capability" &&
+                                        ((equipmentType === "Engine" &&
+                                          (field === statusField || field === "Kalibrasi")) ||
+                                          (equipmentType === "Irrigator" &&
+                                            field === statusField))) ||
+                                      (notificationContext === "calibration" &&
+                                        equipmentType === "Engine" &&
+                                        (field === statusField || field === "Grade"))
+                                    ),
+                                )
+                                .map((field) => (
                                 <label
                                   key={field}
                                   className={`text-xs font-medium text-[#53665a] dark:text-gray-300 ${
@@ -1868,7 +2228,209 @@ function EquipmentDetailTable({
                                       ? "Keterangan / dipinjam oleh"
                                       : field
                                     : field}
-                                  {capabilityContext && field === "Grade" ? (
+                                  {notificationContext === "readiness" &&
+                                  equipmentType === "Irrigator" &&
+                                  field === codeField ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={irrigatorCodes}
+                                      placeholder="Pilih kode Irigator"
+                                      ariaLabel="Kode Irigator"
+                                      searchable
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : notificationContext === "readiness" &&
+                                    equipmentType === "Engine" &&
+                                    field === codeField ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={engineCodes}
+                                      placeholder="Pilih kode Engine"
+                                      ariaLabel="Kode Engine"
+                                      searchable
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : (notificationContext === "capability" ||
+                                    notificationContext === "calibration") &&
+                                    equipmentType === "Engine" &&
+                                    field === codeField ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={engineCodes}
+                                      placeholder="Pilih kode Engine"
+                                      ariaLabel="Kode Engine"
+                                      searchable
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : notificationContext === "readiness" &&
+                                    equipmentType === "Engine" &&
+                                    field === "Sumber Air" ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={availableGroups}
+                                      placeholder="Pilih sumber air"
+                                      ariaLabel={field}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : notificationContext === "readiness" &&
+                                    equipmentType === "Engine" &&
+                                    field === "Tipe Engine" ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={engineTypes}
+                                      placeholder="Pilih"
+                                      ariaLabel={field}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : (notificationContext === "capability" ||
+                                    notificationContext === "calibration") &&
+                                    equipmentType === "Engine" &&
+                                    field === "Sumber Air" ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={availableGroups}
+                                      placeholder="Pilih sumber air"
+                                      ariaLabel={field}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : (notificationContext === "capability" ||
+                                    notificationContext === "calibration") &&
+                                    equipmentType === "Engine" &&
+                                    field === "Tipe Engine" ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={engineTypes}
+                                      placeholder="Pilih"
+                                      ariaLabel={field}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : (notificationContext === "capability" ||
+                                    notificationContext === "calibration") &&
+                                    equipmentType === "Engine" &&
+                                    ["HM", "RPM", "Ampere/Charge", "Thermal indicator"].includes(field) ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={["Normal", "Tidak"]}
+                                      placeholder="Pilih"
+                                      ariaLabel={field}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : notificationContext === "capability" &&
+                                    equipmentType === "Irrigator" &&
+                                    field === codeField ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={irrigatorCodes}
+                                      placeholder="Pilih kode Irigator"
+                                      ariaLabel="Kode Irigator"
+                                      searchable
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : notificationContext === "capability" &&
+                                    equipmentType === "Irrigator" &&
+                                    field === "Tipe Irigator" ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={["ITI", "BTI"]}
+                                      placeholder="Pilih"
+                                      ariaLabel={field}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : notificationContext === "capability" &&
+                                    equipmentType === "Irrigator" &&
+                                    ["Presure gauge", "Speed controller"].includes(field.trim()) ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={["Normal", "Tidak"]}
+                                      placeholder="Pilih"
+                                      ariaLabel={field.trim()}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : (notificationContext === "capability" ||
+                                    notificationContext === "calibration") &&
+                                    field === "Area" ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={availableAreas}
+                                      placeholder="Pilih area"
+                                      ariaLabel={field}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : notificationContext === "capability" &&
+                                    field === "Grade" ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={["Good", "Average", "Poor"]}
+                                      placeholder="Pilih grade"
+                                      ariaLabel={field}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : capabilityContext && field === "Grade" ? (
                                     <select
                                       value={draft[field] ?? ""}
                                       onChange={(event) =>
@@ -1885,6 +2447,20 @@ function EquipmentDetailTable({
                                         </option>
                                       ))}
                                     </select>
+                                  ) : notificationContext === "readiness" &&
+                                    field === statusField ? (
+                                    <SearchableEditDropdown
+                                        value={draft[field] ?? ""}
+                                        options={["Ready", "Perbaikan", "Dipinjam", "FADA"]}
+                                        placeholder="Pilih"
+                                        ariaLabel={field}
+                                        onChange={(value) =>
+                                          setDraft((current) => ({
+                                            ...current,
+                                            [field]: value,
+                                          }))
+                                        }
+                                    />
                                   ) : field === statusField ? (
                                     <select
                                       value={draft[field] ?? ""}
@@ -1904,6 +2480,21 @@ function EquipmentDetailTable({
                                         )
                                       )                                      }
                                     </select>
+                                  ) : notificationContext === "calibration" &&
+                                    equipmentType === "Engine" &&
+                                    field === "Kalibrasi" ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={["Sudah", "Belum"]}
+                                      placeholder="Pilih"
+                                      ariaLabel={field}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
                                   ) : field === "Kalibrasi" ? (
                                     <select
                                       value={draft[field] ?? ""}
@@ -1921,6 +2512,67 @@ function EquipmentDetailTable({
                                         </option>
                                       ))}
                                     </select>
+                                  ) : notificationContext === "readiness" &&
+                                    equipmentType === "Irrigator" &&
+                                    field === "Tipe Irigator" ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={["ITI", "BTI"]}
+                                      placeholder="Pilih"
+                                      ariaLabel={field}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : notificationContext === "readiness" &&
+                                    equipmentType === "Irrigator" &&
+                                    ["Presure gauge", "Speed controller"].includes(field.trim()) ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={["Normal", "Tidak"]}
+                                      placeholder="Pilih"
+                                      ariaLabel={field.trim()}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : notificationContext === "readiness" &&
+                                    equipmentType === "Engine" &&
+                                    ["HM", "RPM", "Ampere/Charge", "Thermal indicator"].includes(field) ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={["Normal", "Tidak"]}
+                                      placeholder="Pilih"
+                                      ariaLabel={field}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
+                                  ) : notificationContext === "readiness" &&
+                                    (equipmentType === "Engine" ||
+                                      equipmentType === "Irrigator") &&
+                                    field === "Area" ? (
+                                    <SearchableEditDropdown
+                                      value={draft[field] ?? ""}
+                                      options={["Lakop", "Kijung", "Divisi 2"]}
+                                      placeholder="Pilih"
+                                      ariaLabel={field}
+                                      onChange={(value) =>
+                                        setDraft((current) => ({
+                                          ...current,
+                                          [field]: value,
+                                        }))
+                                      }
+                                    />
                                   ) : field === "Keterangan" ? (
                                     <textarea
                                       value={draft[field] ?? ""}
@@ -2032,7 +2684,7 @@ function CalibrationDetailModal({
       showCloseButton={false}
     >
       <div className="flex max-h-[90vh] flex-col bg-white dark:bg-gray-900">
-        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[#e5ebe7] bg-gradient-to-r from-[#f0f8f2] to-white px-5 py-5 sm:px-7 dark:border-gray-700 dark:from-gray-800 dark:to-gray-900">
+        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[#e5ebe7] bg-gradient-to-r from-[#f0f8f2] to-white px-5 py-4 sm:px-7 dark:border-gray-700 dark:from-gray-800 dark:to-gray-900">
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-success-100 text-success-700 shadow-sm ring-1 ring-success-700/10 dark:bg-success-500/20 dark:text-success-400 dark:ring-success-400/20">
               <ClipboardCheck size={24} strokeWidth={1.8} aria-hidden="true" />
@@ -2067,6 +2719,7 @@ function CalibrationDetailModal({
         </div>
         <EquipmentDetailTable
           records={matches}
+          availableRecords={records}
           notificationContext="calibration"
           template={template}
           selectedArea={selection.area}
@@ -2198,7 +2851,7 @@ function CapabilityDetailModal({
         ? record.area.toLowerCase() === selection.category.toLowerCase()
         : getRecordGroup(record).toLowerCase() === selection.category.toLowerCase());
     return (
-      record.type === selection.equipmentType &&
+      isEquipmentTypeRecord(record, selection.equipmentType) &&
       categoryMatches &&
       (record.fields.Grade ?? "").trim().toLowerCase() === selection.grade.toLowerCase()
     );
@@ -2283,9 +2936,8 @@ function CapabilityTables({
   valueColumns,
   sideBySide = false,
   centered = false,
-  scopeArea,
+  interactiveAreas,
   canViewDetails,
-  onRestrictedClick,
   onValueClick,
 }: {
   equipmentRecords: EquipmentRecord[];
@@ -2296,21 +2948,21 @@ function CapabilityTables({
   valueColumns: string[];
   sideBySide?: boolean;
   centered?: boolean;
-  scopeArea?: AreaScope;
+  interactiveAreas?: string[];
   canViewDetails: boolean;
-  onRestrictedClick: () => void;
   onValueClick: (dimension: "area" | "group", category: string, grade: string) => void;
 }) {
   const [areaFirst, areaLast] = areaRows;
   const [splitFirst, splitLast] = splitRows;
   return (
-    <div className={sideBySide && !scopeArea ? "grid grid-cols-1 gap-4 xl:grid-cols-2" : "space-y-4"}>
+    <div className={sideBySide ? "grid grid-cols-1 gap-4 xl:grid-cols-2" : "space-y-4"}>
       <div>
         <Subheading>{textCell(`${labelColumn}${areaFirst - 1}`)}</Subheading>
         <DataTable
           compact
           readinessStyle
           readinessCentered={centered}
+          capabilityChartColors
           blueFirstColumn
           headers={[textCell(`${labelColumn}${areaFirst - 1}`), ...valueColumns.map((column) => textCell(`${column}${areaFirst - 1}`))]}
           rows={capabilityRows(
@@ -2321,11 +2973,9 @@ function CapabilityTables({
             areaFirst,
             areaLast,
             valueColumns,
-            scopeArea,
           )}
           highlightLast
-          restrictedAreas={restrictedAreasForScope(scopeArea)}
-          onRestrictedClick={onRestrictedClick}
+          interactiveAreas={interactiveAreas}
           onValueClick={
             canViewDetails
               ? (row, grade) => onValueClick("area", String(row[0]), grade)
@@ -2333,32 +2983,32 @@ function CapabilityTables({
           }
         />
       </div>
-      {!scopeArea && (
-        <div>
-          <Subheading>Jenis</Subheading>
-          <DataTable
-            compact
-            readinessStyle
-            readinessCentered={centered}
-            blueFirstColumn
-            headers={["Jenis", ...valueColumns.map((column) => textCell(`${column}${splitFirst - 1}`))]}
-            rows={capabilityRows(
-              equipmentRecords,
-              equipmentType,
-              "group",
-              labelColumn,
-              splitFirst,
-              splitLast,
-              valueColumns,
-            )}
-            onValueClick={
-              canViewDetails
-                ? (row, grade) => onValueClick("group", String(row[0]), grade)
-                : undefined
-            }
-          />
-        </div>
-      )}
+      <div>
+        <Subheading>Jenis</Subheading>
+        <DataTable
+          compact
+          readinessStyle
+          readinessCentered={centered}
+          capabilityChartColors
+          blueFirstColumn
+          headers={["Jenis", ...valueColumns.map((column) => textCell(`${column}${splitFirst - 1}`))]}
+          rows={capabilityRows(
+            equipmentRecords,
+            equipmentType,
+            "group",
+            labelColumn,
+            splitFirst,
+            splitLast,
+            valueColumns,
+          )}
+          interactiveAreas={interactiveAreas}
+          onValueClick={
+            canViewDetails
+              ? (row, grade) => onValueClick("group", String(row[0]), grade)
+              : undefined
+          }
+        />
+      </div>
     </div>
   );
 }
@@ -2367,10 +3017,11 @@ export default function DashboardPage() {
   const t = useTranslations("calibration");
   const masterDataT = useTranslations("masterData");
   const [equipmentRecords, setEquipmentRecords] = useState<EquipmentRecord[]>([]);
+  const [dashboardUpdates, setDashboardUpdates] = useState<
+    Record<string, string | null>
+  >({});
   const [equipmentStorageError, setEquipmentStorageError] = useState("");
   const [equipmentActionMessage, setEquipmentActionMessage] = useState("");
-  const [restrictedAccessNotice, setRestrictedAccessNotice] = useState("");
-  const restrictedAccessTimeout = useRef<number | null>(null);
   const [areaScope, setAreaScope] = useState<AreaScope | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [areaScopeError, setAreaScopeError] = useState("");
@@ -2396,6 +3047,20 @@ export default function DashboardPage() {
     activeDatasetYear !== null &&
     selectedDatasetYear !== null &&
     activeDatasetYear !== selectedDatasetYear;
+
+  const formatDashboardUpdate = (value: string | null | undefined) => {
+    if (!value) return "Belum ada pembaruan";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Belum ada pembaruan";
+    return new Intl.DateTimeFormat("id-ID", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(date).replace(" pukul ", " ");
+  };
 
   useEffect(() => {
     if (!isDatasetYearDropdownOpen) return;
@@ -2552,33 +3217,47 @@ export default function DashboardPage() {
     };
   }, [refreshMasterDataMetadata]);
 
-  const showRestrictedAreaMessage = () => {
-    setRestrictedAccessNotice("Anda tidak memiliki izin akses");
-    if (restrictedAccessTimeout.current !== null) {
-      window.clearTimeout(restrictedAccessTimeout.current);
-    }
-    restrictedAccessTimeout.current = window.setTimeout(() => {
-      setRestrictedAccessNotice("");
-      restrictedAccessTimeout.current = null;
-    }, 2500);
-  };
-
-  const closeRestrictedAreaMessage = () => {
-    setRestrictedAccessNotice("");
-    if (restrictedAccessTimeout.current !== null) {
-      window.clearTimeout(restrictedAccessTimeout.current);
-      restrictedAccessTimeout.current = null;
-    }
-  };
-
-  useEffect(
-    () => () => {
-      if (restrictedAccessTimeout.current !== null) {
-        window.clearTimeout(restrictedAccessTimeout.current);
+  useEffect(() => {
+    let cancelled = false;
+    const refreshDashboardUpdates = async () => {
+      try {
+        const query =
+          selectedDatasetYear === null
+            ? ""
+            : `?year=${selectedDatasetYear}`;
+        const response = await fetch(`/api/dashboard-updates${query}`, {
+          cache: "no-store",
+        });
+        const result: unknown = await response.json();
+        if (!response.ok) throw new Error("Gagal memuat riwayat pembaruan.");
+        if (
+          result === null ||
+          typeof result !== "object" ||
+          Array.isArray(result)
+        ) {
+          throw new Error("Format riwayat pembaruan tidak valid.");
+        }
+        if (!cancelled) setDashboardUpdates(result as Record<string, string | null>);
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Gagal memuat riwayat pembaruan dashboard:", error);
+        }
       }
-    },
-    [],
-  );
+    };
+
+    void refreshDashboardUpdates();
+    window.addEventListener("focus", refreshDashboardUpdates);
+    window.addEventListener("ggf-equipment-updated", refreshDashboardUpdates);
+    window.addEventListener("ggf-master-data-updated", refreshDashboardUpdates);
+    const refreshInterval = window.setInterval(refreshDashboardUpdates, 60_000);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", refreshDashboardUpdates);
+      window.removeEventListener("ggf-equipment-updated", refreshDashboardUpdates);
+      window.removeEventListener("ggf-master-data-updated", refreshDashboardUpdates);
+      window.clearInterval(refreshInterval);
+    };
+  }, [selectedDatasetYear, masterDataRefreshKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2648,7 +3327,7 @@ export default function DashboardPage() {
     if (!areaScope) return;
     let cancelled = false;
 
-    summary = { title: "", cells: {} };
+    summary = { title: "", cells: {}, hasMasterData: false };
     setSummaryReady(false);
     setSummaryError("");
 
@@ -2685,12 +3364,6 @@ export default function DashboardPage() {
       .catch((error: unknown) => {
         if (cancelled) return;
         console.error("Gagal memuat ringkasan irigasi:", error);
-        if (!isAuthenticated) {
-          summary = { title: summaryData.title, cells: summaryData.cells };
-          setSummaryError("");
-          setSummaryReady(true);
-          return;
-        }
         setSummaryError(
           error instanceof Error
             ? error.message
@@ -2717,7 +3390,6 @@ export default function DashboardPage() {
       areaScope !== "PG1" &&
       selectedArea?.toLowerCase() !== areaScope?.toLowerCase()
     ) {
-      setEquipmentStorageError("Akun hanya dapat mengubah aset di area yang ditetapkan.");
       return;
     }
 
@@ -2985,36 +3657,12 @@ export default function DashboardPage() {
     }
   };
 
-  const engineReadinessSeries: Series = [
-    { name: textCell("C20"), data: [21, 22, 23].map((row) => numberCell(`C${row}`)) },
-    { name: textCell("D20"), data: [21, 22, 23].map((row) => numberCell(`D${row}`)) },
-    { name: textCell("E20"), data: [21, 22, 23].map((row) => numberCell(`E${row}`)) },
-    { name: textCell("F20"), data: [21, 22, 23].map((row) => numberCell(`F${row}`)) },
-  ];
-
-  const irrigatorReadinessSeries: Series = [
-    { name: textCell("N20"), data: [21, 22, 23].map((row) => numberCell(`N${row}`)) },
-    { name: textCell("O20"), data: [21, 22, 23].map((row) => numberCell(`O${row}`)) },
-    { name: textCell("P20"), data: [21, 22, 23].map((row) => numberCell(`P${row}`)) },
-    { name: textCell("Q20"), data: [21, 22, 23].map((row) => numberCell(`Q${row}`)) },
-  ];
-
-  const visibleEquipmentRecords = useMemo(
-    () =>
-      areaScope === "PG1"
-        ? equipmentRecords
-        : equipmentRecords.filter(
-            (record) =>
-              String(record.area ?? "").toLowerCase() === areaScope?.toLowerCase(),
-          ),
-    [areaScope, equipmentRecords],
-  );
-  const chartAreas =
-    areaScope === "PG1"
-      ? ["Kijung", "Lakop", "Divisi 2"]
-      : areaScope
-        ? [areaScope]
-        : [];
+  const visibleEquipmentRecords = equipmentRecords;
+  const interactiveAreas =
+    isAuthenticated && areaScope && areaScope !== "PG1"
+      ? [areaScope]
+      : undefined;
+  const chartAreas = ["Kijung", "Lakop", "Divisi 2"];
   const scopedReadinessSeries = (
     type: EquipmentType,
     columns: string[],
@@ -3046,7 +3694,7 @@ export default function DashboardPage() {
           (area) =>
             visibleEquipmentRecords.filter(
               (record) =>
-                record.type === type &&
+                isEquipmentTypeRecord(record, type) &&
                 record.area.toLowerCase() === area.toLowerCase() &&
                 record.fields.Grade?.trim().toLowerCase() === grade.trim().toLowerCase(),
             ).length,
@@ -3068,7 +3716,7 @@ export default function DashboardPage() {
           const group = String(cell(`${labelColumn}${firstRow + index}`));
           return visibleEquipmentRecords.filter(
             (record) =>
-              record.type === type &&
+              isEquipmentTypeRecord(record, type) &&
               getRecordGroup(record).trim().toLowerCase() === group.trim().toLowerCase() &&
               (record.fields.Grade ?? "").trim().toLowerCase() === grade.trim().toLowerCase(),
           ).length;
@@ -3077,7 +3725,8 @@ export default function DashboardPage() {
     });
   const capabilityPercentage = (type: EquipmentType) => {
     const records = visibleEquipmentRecords.filter(
-      (record) => record.type === type && record.fields.Grade?.trim(),
+      (record) =>
+        isEquipmentTypeRecord(record, type) && record.fields.Grade?.trim(),
     );
     if (!records.length) return 0;
     return (
@@ -3090,32 +3739,26 @@ export default function DashboardPage() {
     visibleEquipmentRecords,
     54,
     57,
-    undefined,
-    areaScope === "PG1" || !areaScope ? undefined : areaScope,
   );
   const deepWellCalibrationRows = calibrationRows(
     visibleEquipmentRecords,
     40,
     43,
     textCell("M38"),
-    areaScope === "PG1" || !areaScope ? undefined : areaScope,
   );
   const reservoirCalibrationRows = calibrationRows(
     visibleEquipmentRecords,
     47,
     50,
     textCell("M45"),
-    areaScope === "PG1" || !areaScope ? undefined : areaScope,
   );
   const totalPipeRows = pipeRows(
     50,
     53,
-    areaScope === "PG1" || !areaScope ? undefined : areaScope,
   );
   const areaPipeRows = pipeRows(
     39,
     47,
-    areaScope === "PG1" || !areaScope ? undefined : areaScope,
   );
   const pipeChartGroups = [
     ...["Lakop", "Kijung", "Divisi 2"].map((area) => ({
@@ -3132,7 +3775,7 @@ export default function DashboardPage() {
         })),
     })),
     {
-      label: textCell("B50"),
+      label: summary.pipeCells ? "Total" : textCell("B50"),
       bars: totalPipeRows
         .filter(
           (row) =>
@@ -3151,6 +3794,16 @@ export default function DashboardPage() {
     return (
       <div role={loadingError ? "alert" : "status"} className="p-6 text-sm text-gray-600 dark:text-gray-300">
         {loadingError || "Memeriksa cakupan area..."}
+      </div>
+    );
+  }
+  if (!summary.hasMasterData) {
+    return (
+      <div
+        role="status"
+        className="p-6 text-sm text-gray-600 dark:text-gray-300"
+      >
+        {masterDataT("emptyHistory")}
       </div>
     );
   }
@@ -3245,33 +3898,6 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
-      {restrictedAccessNotice && (
-        <div className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/40 p-4">
-          <div
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="restricted-access-title"
-            className="w-full max-w-sm rounded-2xl border border-error-200 bg-white p-5 shadow-theme-xl dark:border-error-800 dark:bg-gray-900"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <p
-                id="restricted-access-title"
-                className="text-base font-semibold text-error-700 dark:text-error-300"
-              >
-                {restrictedAccessNotice}
-              </p>
-              <button
-                type="button"
-                onClick={closeRestrictedAreaMessage}
-                aria-label="Tutup notifikasi"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-lg leading-none text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-              >
-                ×
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       <main className="min-w-0 space-y-5 pb-8">
       {(equipmentStorageError || equipmentActionMessage) && (
         <div
@@ -3298,6 +3924,11 @@ export default function DashboardPage() {
         <Panel
           title={textCell("B4")}
           titleIcon={<HeadingIcon><Cog size={18} aria-hidden="true" /></HeadingIcon>}
+          titleAdornment={
+            <span className="text-[11px] font-normal text-[#718078] dark:text-gray-400">
+              Terakhir diperbarui: {formatDashboardUpdate(dashboardUpdates.engineReadiness)}
+            </span>
+          }
         >
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -3309,9 +3940,8 @@ export default function DashboardPage() {
                 columns={["C", "D", "E", "F"]}
                 equipmentType="Engine"
                 equipmentRecords={visibleEquipmentRecords}
-                areaScope={areaScope === "PG1" ? undefined : areaScope}
+                interactiveAreas={interactiveAreas}
                 canViewDetails={isAuthenticated}
-                onRestrictedClick={showRestrictedAreaMessage}
                 onSaveRecord={saveEquipmentRecord}
                 onDeleteRecord={deleteEquipmentRecord}
                 onAddRecord={addEquipmentRecord}
@@ -3324,9 +3954,8 @@ export default function DashboardPage() {
                 columns={["C", "D", "E", "F"]}
                 equipmentType="Engine"
                 equipmentRecords={visibleEquipmentRecords}
-                areaScope={areaScope === "PG1" ? undefined : areaScope}
+                interactiveAreas={interactiveAreas}
                 canViewDetails={isAuthenticated}
-                onRestrictedClick={showRestrictedAreaMessage}
                 onSaveRecord={saveEquipmentRecord}
                 onDeleteRecord={deleteEquipmentRecord}
                 onAddRecord={addEquipmentRecord}
@@ -3339,13 +3968,11 @@ export default function DashboardPage() {
               </h3>
               <DeferredChart height={320}>
                 <SummaryReadinessChart
-                  categories={areaScope === "PG1"
-                    ? [21, 22, 23].map((row) => textCell(`B${row}`))
-                    : chartAreas}
-                  series={areaScope === "PG1"
-                    ? engineReadinessSeries
-                    : scopedReadinessSeries("Engine", ["C", "D", "E", "F"])}
+                  categories={chartAreas}
+                  series={scopedReadinessSeries("Engine", ["C", "D", "E", "F"])}
                   height={320}
+                  canInteract={isAuthenticated}
+                  interactiveAreas={interactiveAreas}
                 />
               </DeferredChart>
             </div>
@@ -3355,6 +3982,11 @@ export default function DashboardPage() {
         <Panel
           title={textCell("M4")}
           titleIcon={<HeadingIcon><Droplets size={18} aria-hidden="true" /></HeadingIcon>}
+          titleAdornment={
+            <span className="text-[11px] font-normal text-[#718078] dark:text-gray-400">
+              Terakhir diperbarui: {formatDashboardUpdate(dashboardUpdates.irrigatorReadiness)}
+            </span>
+          }
         >
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -3367,9 +3999,8 @@ export default function DashboardPage() {
                 labelColumn="M"
                 equipmentType="Irrigator"
                 equipmentRecords={visibleEquipmentRecords}
-                areaScope={areaScope === "PG1" ? undefined : areaScope}
+                interactiveAreas={interactiveAreas}
                 canViewDetails={isAuthenticated}
-                onRestrictedClick={showRestrictedAreaMessage}
                 onSaveRecord={saveEquipmentRecord}
                 onDeleteRecord={deleteEquipmentRecord}
                 onAddRecord={addEquipmentRecord}
@@ -3383,9 +4014,8 @@ export default function DashboardPage() {
                 labelColumn="M"
                 equipmentType="Irrigator"
                 equipmentRecords={visibleEquipmentRecords}
-                areaScope={areaScope === "PG1" ? undefined : areaScope}
+                interactiveAreas={interactiveAreas}
                 canViewDetails={isAuthenticated}
-                onRestrictedClick={showRestrictedAreaMessage}
                 onSaveRecord={saveEquipmentRecord}
                 onDeleteRecord={deleteEquipmentRecord}
                 onAddRecord={addEquipmentRecord}
@@ -3398,13 +4028,11 @@ export default function DashboardPage() {
               </h3>
               <DeferredChart height={320}>
                 <SummaryReadinessChart
-                  categories={areaScope === "PG1"
-                    ? [21, 22, 23].map((row) => textCell(`M${row}`))
-                    : chartAreas}
-                  series={areaScope === "PG1"
-                    ? irrigatorReadinessSeries
-                    : scopedReadinessSeries("Irrigator", ["N", "O", "P", "Q"])}
+                  categories={chartAreas}
+                  series={scopedReadinessSeries("Irrigator", ["N", "O", "P", "Q"])}
                   height={320}
+                  canInteract={isAuthenticated}
+                  interactiveAreas={interactiveAreas}
                 />
               </DeferredChart>
             </div>
@@ -3416,7 +4044,14 @@ export default function DashboardPage() {
         <Panel
           title={textCell("B26")}
           titleIcon={<HeadingIcon><BarChart3 size={18} aria-hidden="true" /></HeadingIcon>}
-          titleAdornment={<PercentageValue value={capabilityPercentage("Engine")} decimals={1} />}
+          titleAdornment={
+            <div className="flex flex-wrap items-center gap-2">
+              <PercentageValue value={capabilityPercentage("Engine")} decimals={1} />
+              <span className="text-[11px] font-normal text-[#718078] dark:text-gray-400">
+                Terakhir diperbarui: {formatDashboardUpdate(dashboardUpdates.engineCapability)}
+              </span>
+            </div>
+          }
         >
           <div className="space-y-5">
             <CapabilityTables
@@ -3428,9 +4063,8 @@ export default function DashboardPage() {
               valueColumns={["C", "D", "E"]}
               sideBySide
               centered
-              scopeArea={areaScope === "PG1" ? undefined : areaScope}
+              interactiveAreas={interactiveAreas}
               canViewDetails={isAuthenticated}
-              onRestrictedClick={showRestrictedAreaMessage}
               onValueClick={(dimension, category, grade) =>
                 setCapabilitySelection({
                   equipmentType: "Engine",
@@ -3440,7 +4074,7 @@ export default function DashboardPage() {
                 })
               }
             />
-            <div className={`grid grid-cols-1 gap-4 ${areaScope === "PG1" ? "xl:grid-cols-2" : ""}`}>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
               <BarChart
                 key={`engine-capability-area-${isAuthenticated}`}
                 categories={chartAreas}
@@ -3449,44 +4083,44 @@ export default function DashboardPage() {
                 showTotals
                 height={245}
                 integerYAxisLabels
-                onDataPointClick={(seriesIndex, dataPointIndex) => {
-                  if (!isAuthenticated) return;
-                  openCapabilityDetail(
-                    "Engine",
-                    "area",
-                    chartAreas,
-                    ["C", "D", "E"].map((column) =>
-                      textCell(`${column}27`),
-                    ),
-                    seriesIndex,
-                    dataPointIndex,
-                  );
-                }}
+                interactiveCategories={interactiveAreas}
+                onDataPointClick={isAuthenticated
+                  ? (seriesIndex, dataPointIndex) =>
+                      openCapabilityDetail(
+                        "Engine",
+                        "area",
+                        chartAreas,
+                        ["C", "D", "E"].map((column) =>
+                          textCell(`${column}27`),
+                        ),
+                        seriesIndex,
+                        dataPointIndex,
+                      )
+                  : undefined}
               />
-              {areaScope === "PG1" && (
-                <BarChart
-                  key={`engine-capability-type-${isAuthenticated}`}
-                  categories={[34, 35].map((row) => textCell(`B${row}`))}
-                  series={groupedCapabilitySeries("Engine", "B", 34, 35, ["C", "D", "E"])}
-                  colors={CAPABILITY_CHART_COLORS}
-                  stacked
-                  showTotals
-                  height={245}
-                  onDataPointClick={(seriesIndex, dataPointIndex) => {
-                    if (!isAuthenticated) return;
-                    openCapabilityDetail(
-                      "Engine",
-                      "group",
-                      [34, 35].map((row) => textCell(`B${row}`)),
-                      ["C", "D", "E"].map((column) =>
-                        textCell(`${column}33`),
-                      ),
-                      seriesIndex,
-                      dataPointIndex,
-                    );
-                  }}
-                />
-              )}
+              <BarChart
+                key={`engine-capability-type-${isAuthenticated}`}
+                categories={[34, 35].map((row) => textCell(`B${row}`))}
+                series={groupedCapabilitySeries("Engine", "B", 34, 35, ["C", "D", "E"])}
+                colors={CAPABILITY_CHART_COLORS}
+                stacked
+                showTotals
+                height={245}
+                onDataPointClick={isAuthenticated && areaScope === "PG1"
+                  ? (seriesIndex, dataPointIndex) => {
+                      openCapabilityDetail(
+                        "Engine",
+                        "group",
+                        [34, 35].map((row) => textCell(`B${row}`)),
+                        ["C", "D", "E"].map((column) =>
+                          textCell(`${column}33`),
+                        ),
+                        seriesIndex,
+                        dataPointIndex,
+                      );
+                    }
+                  : undefined}
+              />
             </div>
           </div>
         </Panel>
@@ -3494,7 +4128,14 @@ export default function DashboardPage() {
         <Panel
           title={textCell("M26")}
           titleIcon={<HeadingIcon><BarChart3 size={18} aria-hidden="true" /></HeadingIcon>}
-          titleAdornment={<PercentageValue value={capabilityPercentage("Irrigator")} decimals={0} />}
+          titleAdornment={
+            <div className="flex flex-wrap items-center gap-2">
+              <PercentageValue value={capabilityPercentage("Irrigator")} decimals={1} />
+              <span className="text-[11px] font-normal text-[#718078] dark:text-gray-400">
+                Terakhir diperbarui: {formatDashboardUpdate(dashboardUpdates.irrigatorCapability)}
+              </span>
+            </div>
+          }
         >
           <div className="space-y-5">
             <CapabilityTables
@@ -3506,9 +4147,8 @@ export default function DashboardPage() {
               valueColumns={["N", "O", "P"]}
               sideBySide
               centered
-              scopeArea={areaScope === "PG1" ? undefined : areaScope}
+              interactiveAreas={interactiveAreas}
               canViewDetails={isAuthenticated}
-              onRestrictedClick={showRestrictedAreaMessage}
               onValueClick={(dimension, category, grade) =>
                 setCapabilitySelection({
                   equipmentType: "Irrigator",
@@ -3518,7 +4158,7 @@ export default function DashboardPage() {
                 })
               }
             />
-            <div className={`grid grid-cols-1 gap-4 ${areaScope === "PG1" ? "xl:grid-cols-2" : ""}`}>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
               <BarChart
                 key={`irrigator-capability-area-${isAuthenticated}`}
                 categories={chartAreas}
@@ -3527,44 +4167,44 @@ export default function DashboardPage() {
                 showTotals
                 height={245}
                 integerYAxisLabels
-                onDataPointClick={(seriesIndex, dataPointIndex) => {
-                  if (!isAuthenticated) return;
-                  openCapabilityDetail(
-                    "Irrigator",
-                    "area",
-                    chartAreas,
-                    ["N", "O", "P"].map((column) =>
-                      textCell(`${column}27`),
-                    ),
-                    seriesIndex,
-                    dataPointIndex,
-                  );
-                }}
+                interactiveCategories={interactiveAreas}
+                onDataPointClick={isAuthenticated
+                  ? (seriesIndex, dataPointIndex) =>
+                      openCapabilityDetail(
+                        "Irrigator",
+                        "area",
+                        chartAreas,
+                        ["N", "O", "P"].map((column) =>
+                          textCell(`${column}27`),
+                        ),
+                        seriesIndex,
+                        dataPointIndex,
+                      )
+                  : undefined}
               />
-              {areaScope === "PG1" && (
-                <BarChart
-                  key={`irrigator-capability-type-${isAuthenticated}`}
-                  categories={[34, 35].map((row) => textCell(`M${row}`))}
-                  series={groupedCapabilitySeries("Irrigator", "M", 34, 35, ["N", "O", "P"])}
-                  colors={CAPABILITY_CHART_COLORS}
-                  stacked
-                  showTotals
-                  height={245}
-                  onDataPointClick={(seriesIndex, dataPointIndex) => {
-                    if (!isAuthenticated) return;
-                    openCapabilityDetail(
-                      "Irrigator",
-                      "group",
-                      [34, 35].map((row) => textCell(`M${row}`)),
-                      ["N", "O", "P"].map((column) =>
-                        textCell(`${column}33`),
-                      ),
-                      seriesIndex,
-                      dataPointIndex,
-                    );
-                  }}
-                />
-              )}
+              <BarChart
+                key={`irrigator-capability-type-${isAuthenticated}`}
+                categories={[34, 35].map((row) => textCell(`M${row}`))}
+                series={groupedCapabilitySeries("Irrigator", "M", 34, 35, ["N", "O", "P"])}
+                colors={CAPABILITY_CHART_COLORS}
+                stacked
+                showTotals
+                height={245}
+                onDataPointClick={isAuthenticated && areaScope === "PG1"
+                  ? (seriesIndex, dataPointIndex) => {
+                      openCapabilityDetail(
+                        "Irrigator",
+                        "group",
+                        [34, 35].map((row) => textCell(`M${row}`)),
+                        ["N", "O", "P"].map((column) =>
+                          textCell(`${column}33`),
+                        ),
+                        seriesIndex,
+                        dataPointIndex,
+                      );
+                    }
+                  : undefined}
+              />
             </div>
           </div>
         </Panel>
@@ -3575,6 +4215,11 @@ export default function DashboardPage() {
           id="pipes"
           title={textCell("B37")}
           titleIcon={<HeadingIcon><Cable size={18} aria-hidden="true" /></HeadingIcon>}
+          titleAdornment={
+            <span className="text-[11px] font-normal text-[#718078] dark:text-gray-400">
+              Terakhir diperbarui: {formatDashboardUpdate(dashboardUpdates.pipes)}
+            </span>
+          }
         >
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -3585,8 +4230,14 @@ export default function DashboardPage() {
                   </h3>
                   <DataTable
                     headers={[
-                      textCell("B38"), textCell("C38"), textCell("E38"), textCell("F38"),
-                      textCell("G38"), textCell("I38"), textCell("J38"), textCell("K38"),
+                      summary.pipeCells ? String(summary.pipeCells.A1 ?? "") : textCell("B38"),
+                      summary.pipeCells ? String(summary.pipeCells.B1 ?? "") : textCell("C38"),
+                      summary.pipeCells ? String(summary.pipeCells.C1 ?? "") : textCell("E38"),
+                      summary.pipeCells ? String(summary.pipeCells.D1 ?? "") : textCell("F38"),
+                      summary.pipeCells ? String(summary.pipeCells.E1 ?? "") : textCell("G38"),
+                      summary.pipeCells ? String(summary.pipeCells.F1 ?? "") : textCell("I38"),
+                      summary.pipeCells ? String(summary.pipeCells.G1 ?? "") : textCell("J38"),
+                      summary.pipeCells ? String(summary.pipeCells.H1 ?? "") : textCell("K38"),
                     ]}
                     rows={areaPipeRows.filter(
                       (row) => String(row[0]).toLowerCase() === area.toLowerCase(),
@@ -3595,31 +4246,25 @@ export default function DashboardPage() {
                     dense
                     pipeHeader
                     mergeRepeatedFirstColumn
-                    restrictedAreas={restrictedAreasForScope(areaScope === "PG1" ? undefined : areaScope)}
-                    onRestrictedClick={showRestrictedAreaMessage}
                     columnWidths={["14%", "24%", "10%", "9%", "11%", "9%", "9%", "14%"]}
-                    leftAlignedColumns={[0, 1, 2]}
-                    wrapColumns={[1]}
                   />
                 </div>
               ))}
             </div>
-            {areaScope === "PG1" && (
-              <div className="w-full min-w-0 space-y-2">
-                <h3 className="text-sm font-semibold text-[#365343] dark:text-gray-200">
-                  Kondisi Pipa per Area dan Jenis
-                </h3>
-                <PipeStackedBarChart
-                  groups={pipeChartGroups}
-                  statuses={[
-                    { label: textCell("F38"), color: "#2563EB" },
-                    { label: textCell("G38"), color: "#039855" },
-                    { label: textCell("I38"), color: "#FDE047" },
-                    { label: textCell("J38"), color: "#D92D20" },
-                  ]}
-                />
-              </div>
-            )}
+            <div className="w-full min-w-0 space-y-2">
+              <h3 className="text-sm font-semibold text-[#365343] dark:text-gray-200">
+                Kondisi Pipa per Area dan Jenis
+              </h3>
+              <PipeStackedBarChart
+                groups={pipeChartGroups}
+                statuses={[
+                  { label: summary.pipeCells ? String(summary.pipeCells.D1 ?? "") : textCell("F38"), color: "#2563EB" },
+                  { label: summary.pipeCells ? String(summary.pipeCells.E1 ?? "") : textCell("G38"), color: "#039855" },
+                  { label: summary.pipeCells ? String(summary.pipeCells.F1 ?? "") : textCell("I38"), color: "#FDE047" },
+                  { label: summary.pipeCells ? String(summary.pipeCells.G1 ?? "") : textCell("J38"), color: "#D92D20" },
+                ]}
+              />
+            </div>
           </div>
         </Panel>
 
@@ -3627,6 +4272,11 @@ export default function DashboardPage() {
           id="calibration"
           title={textCell("M37")}
           titleIcon={<HeadingIcon><ClipboardCheck size={18} aria-hidden="true" /></HeadingIcon>}
+          titleAdornment={
+            <span className="text-[11px] font-normal text-[#718078] dark:text-gray-400">
+              Terakhir diperbarui: {formatDashboardUpdate(dashboardUpdates.calibration)}
+            </span>
+          }
           right={
             <Link
               href="/kalibrasi"
@@ -3653,8 +4303,7 @@ export default function DashboardPage() {
                   headers={[textCell("M39"), textCell("N39"), textCell("O39"), textCell("P39")]}
                   rows={deepWellCalibrationRows}
                   highlightLast
-                  restrictedAreas={restrictedAreasForScope(areaScope === "PG1" ? undefined : areaScope, false)}
-                  onRestrictedClick={showRestrictedAreaMessage}
+                  interactiveAreas={interactiveAreas}
                   percentageColumns={[3]}
                   onValueClick={
                     isAuthenticated
@@ -3681,8 +4330,7 @@ export default function DashboardPage() {
                   headers={[textCell("M46"), textCell("N46"), textCell("O46"), textCell("P46")]}
                   rows={reservoirCalibrationRows}
                   highlightLast
-                  restrictedAreas={restrictedAreasForScope(areaScope === "PG1" ? undefined : areaScope, false)}
-                  onRestrictedClick={showRestrictedAreaMessage}
+                  interactiveAreas={interactiveAreas}
                   percentageColumns={[3]}
                   onValueClick={
                     isAuthenticated
@@ -3709,8 +4357,7 @@ export default function DashboardPage() {
                   headers={[textCell("M53"), textCell("N53"), textCell("O53"), textCell("P53")]}
                   rows={areaCalibrationRows}
                   highlightLast
-                  restrictedAreas={restrictedAreasForScope(areaScope === "PG1" ? undefined : areaScope, false)}
-                  onRestrictedClick={showRestrictedAreaMessage}
+                  interactiveAreas={interactiveAreas}
                   percentageColumns={[3]}
                   onValueClick={
                     isAuthenticated
@@ -3740,7 +4387,6 @@ export default function DashboardPage() {
                     <CalibrationPieChart
                       label={label}
                       values={[Number(totalRow?.[1]) || 0, Number(totalRow?.[2]) || 0]}
-                      onRestrictedClick={showRestrictedAreaMessage}
                     />
                   </div>
                 );

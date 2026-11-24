@@ -316,6 +316,16 @@ ON public.irrigation_calibrations(area, calibration_date DESC);
 CREATE INDEX IF NOT EXISTS idx_irrigation_calibrations_engine
 ON public.irrigation_calibrations(engine_code);
 
+CREATE TABLE IF NOT EXISTS public.irrigation_calibration_year_archives (
+    archive_year INTEGER PRIMARY KEY CHECK (archive_year BETWEEN 2000 AND 2100),
+    reset_year INTEGER NOT NULL UNIQUE CHECK (reset_year BETWEEN 2000 AND 2100),
+    reset_applied BOOLEAN NOT NULL DEFAULT TRUE,
+    status_records JSONB NOT NULL,
+    calibration_records JSONB NOT NULL,
+    archived_by TEXT NOT NULL,
+    archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- =========================================================
 -- 10. RIWAYAT VERSI MASTER DATA IRIGASI
 -- =========================================================

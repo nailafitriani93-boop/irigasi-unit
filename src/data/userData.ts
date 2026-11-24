@@ -67,7 +67,10 @@ export const AREA_SCOPES: AreaScope[] = [
 
 export const USER_ACCESS_PAGES = [
   { id: "dashboard", label: "Dashboard" },
-  { id: "manajemen-user", label: "Manajemen User" },
+  { id: "manajemen-user", label: "Kelola User" },
+  { id: "kalibrasi", label: "Kalibrasi Engine" },
+  { id: "master-data", label: "Master Data" },
+  { id: "master-unit", label: "Master Unit" },
 ] as const;
 
 export const ACTIVITY_LOG_STORAGE_KEY = "ggf-user-activity-log";

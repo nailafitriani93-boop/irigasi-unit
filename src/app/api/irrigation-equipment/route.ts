@@ -13,6 +13,7 @@ import {
   type EquipmentRow,
 } from "@/lib/irrigationEquipment";
 import {
+  applyCalibrationStatusFromWorkbook,
   equipmentRecordsFromSnapshot,
   getMasterDataSnapshot,
 } from "@/lib/masterData";
@@ -108,7 +109,6 @@ async function selectEquipmentById(
 export async function GET(request: Request) {
   try {
     const access = await getAuthenticatedAreaScope();
-    const areaScope = access?.areaScope ?? "PG1";
 
     const rawYear = new URL(request.url).searchParams.get("year");
     const requestedYear = rawYear === null ? undefined : Number(rawYear);
@@ -137,9 +137,14 @@ export async function GET(request: Request) {
         { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
+    if (!snapshot) {
+      return NextResponse.json([], {
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
     if (snapshot && !snapshot.is_active) {
       return NextResponse.json(
-        equipmentRecordsFromSnapshot(snapshot, areaScope),
+        equipmentRecordsFromSnapshot(snapshot, "PG1"),
         { headers: { "Cache-Control": "no-store" } },
       );
     }
@@ -147,13 +152,16 @@ export async function GET(request: Request) {
     await ensureIrrigationEquipmentSeeded();
     const result = await db.query<EquipmentRow>(
       `${equipmentSelect}
-       WHERE ($1 = 'PG1' OR e.area_name = $1)
        ORDER BY e.source_sheet, e.source_row`,
-      [areaScope],
     );
 
     return NextResponse.json(
-      result.rows.map(toEquipmentRecord),
+      snapshot
+        ? applyCalibrationStatusFromWorkbook(
+            result.rows.map(toEquipmentRecord),
+            snapshot.workbook_data,
+          )
+        : result.rows.map(toEquipmentRecord),
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

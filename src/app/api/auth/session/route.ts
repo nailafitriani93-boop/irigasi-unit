@@ -10,6 +10,35 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const DEFAULT_ACCESS_PAGES = [
+  "dashboard",
+  "manajemen-user",
+  "kalibrasi",
+  "master-data",
+  "master-unit",
+];
+
+function normalizeAccessPages(value: string[] | null) {
+  if (!Array.isArray(value)) return DEFAULT_ACCESS_PAGES;
+  const aliases: Record<string, string> = {
+    dashboard: "dashboard",
+    "kelola user": "manajemen-user",
+    "kelola-user": "manajemen-user",
+    "manajemen user": "manajemen-user",
+    "manajemen-user": "manajemen-user",
+    "kalibrasi engine": "kalibrasi",
+    kalibrasi: "kalibrasi",
+    "master data": "master-data",
+    "master-data": "master-data",
+    "master unit": "master-unit",
+    "master-unit": "master-unit",
+  };
+  return [...new Set(value
+    .filter((page): page is string => typeof page === "string")
+    .map((page) => aliases[page.trim().toLowerCase()])
+    .filter((page): page is string => !!page))];
+}
+
 export async function GET() {
   try {
     const session = await getAuthSession();
@@ -59,7 +88,7 @@ export async function GET() {
           gender: user.gender,
           roleId: user.role_id,
           roleName: user.role_name,
-          accessPages: user.access_pages ?? [],
+          accessPages: normalizeAccessPages(user.access_pages),
           areaScope,
         },
       },

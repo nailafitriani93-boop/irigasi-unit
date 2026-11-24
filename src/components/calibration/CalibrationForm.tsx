@@ -40,6 +40,8 @@ type MeasurementForm = {
 type FormState = {
   calibrationDate: string;
   engineCode: string;
+  area: string;
+  waterSource: string;
   irrigatorCode: string;
   sourceLocation: string;
   pipeCount: string;
@@ -73,6 +75,8 @@ const EMPTY_MEASUREMENT: MeasurementForm = {
   travelSecondsPerMeter: "",
 };
 
+const calibrationAreas = ["Lakop", "Kijung", "Divisi 2"];
+
 function localDateValue() {
   const date = new Date();
   date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
@@ -83,6 +87,8 @@ function emptyForm(calibrationDate = "", engineCode = ""): FormState {
   return {
     calibrationDate,
     engineCode,
+    area: "",
+    waterSource: "",
     irrigatorCode: "",
     sourceLocation: "",
     pipeCount: "",
@@ -314,6 +320,23 @@ export default function CalibrationForm({
         .sort((a, b) => a.code.localeCompare(b.code)),
     [equipment],
   );
+  const waterSources = useMemo(
+    () =>
+      [...new Set(engines.map((engine) => engine.fields["Sumber Air"] ?? engine.group))]
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b)),
+    [engines],
+  );
+  const availableEngines = useMemo(
+    () =>
+      engines.filter(
+        (engine) =>
+          (!form.area || engine.area === form.area) &&
+          (!form.waterSource ||
+            (engine.fields["Sumber Air"] ?? engine.group) === form.waterSource),
+      ),
+    [engines, form.area, form.waterSource],
+  );
   const selectedEngine = engines.find((engine) => engine.code === form.engineCode);
   const irrigators = useMemo(
     () =>
@@ -326,6 +349,19 @@ export default function CalibrationForm({
         .sort((a, b) => a.code.localeCompare(b.code)),
     [equipment, selectedEngine],
   );
+
+  useEffect(() => {
+    if (!selectedEngine) return;
+
+    const waterSource =
+      selectedEngine.fields["Sumber Air"] ?? selectedEngine.group;
+    setForm((current) =>
+      current.area === selectedEngine.area &&
+      current.waterSource === waterSource
+        ? current
+        : { ...current, area: selectedEngine.area, waterSource },
+    );
+  }, [selectedEngine, form.area, form.waterSource]);
 
   const measurements = useMemo(
     () => form.measurements.map(toMeasurement),
@@ -358,6 +394,10 @@ export default function CalibrationForm({
     setForm((current) => ({
       ...current,
       engineCode,
+      area: engine?.area ?? current.area,
+      waterSource: engine
+        ? engine.fields["Sumber Air"] ?? engine.group
+        : current.waterSource,
       irrigatorCode:
         irrigators.some(
           (irrigator) =>
@@ -367,6 +407,42 @@ export default function CalibrationForm({
           ? current.irrigatorCode
           : "",
     }));
+    setFormError("");
+    setFormMessage("");
+  };
+
+  const handleAreaChange = (area: string) => {
+    setForm((current) => {
+      const engine = engines.find(
+        (record) => record.code === current.engineCode,
+      );
+      const clearEngine = !!engine && engine.area !== area;
+      return {
+        ...current,
+        area,
+        engineCode: clearEngine ? "" : current.engineCode,
+        irrigatorCode: clearEngine ? "" : current.irrigatorCode,
+      };
+    });
+    setFormError("");
+    setFormMessage("");
+  };
+
+  const handleWaterSourceChange = (waterSource: string) => {
+    setForm((current) => {
+      const engine = engines.find(
+        (record) => record.code === current.engineCode,
+      );
+      const clearEngine =
+        !!engine &&
+        (engine.fields["Sumber Air"] ?? engine.group) !== waterSource;
+      return {
+        ...current,
+        waterSource,
+        engineCode: clearEngine ? "" : current.engineCode,
+        irrigatorCode: clearEngine ? "" : current.irrigatorCode,
+      };
+    });
     setFormError("");
     setFormMessage("");
   };
@@ -525,7 +601,7 @@ export default function CalibrationForm({
                 required
                 value={form.calibrationDate}
                 onChange={(event) => updateForm("calibrationDate", event.target.value)}
-                className={inputClassName}
+                className={`${inputClassName} calibration-date-input`}
               />
             </FormField>
             <FormField label={t("engine")}>
@@ -534,10 +610,10 @@ export default function CalibrationForm({
                 value={form.engineCode}
                 onChange={(event) => handleEngineChange(event.target.value)}
                 className={inputClassName}
-                disabled={isLoading || !engines.length || !!initialEngineCode}
+                disabled={isLoading || !availableEngines.length || !!initialEngineCode}
               >
                 <option value="">{t("selectEngine")}</option>
-                {engines.map((engine) => (
+                {availableEngines.map((engine) => (
                   <option key={engine.code} value={engine.code}>
                     {engine.code} · {engine.group}
                   </option>
@@ -545,11 +621,18 @@ export default function CalibrationForm({
               </select>
             </FormField>
             <FormField label={t("area")}>
-              <input
-                readOnly
-                value={selectedEngine?.area ?? ""}
-                className={`${inputClassName} bg-gray-50 dark:bg-gray-800`}
-              />
+              <select
+                value={form.area}
+                onChange={(event) => handleAreaChange(event.target.value)}
+                className={inputClassName}
+              >
+                <option value="">{t("area")}</option>
+                {calibrationAreas.map((area) => (
+                  <option key={area} value={area}>
+                    {area}
+                  </option>
+                ))}
+              </select>
             </FormField>
             <FormField label={t("irrigator")}>
               <select
@@ -575,13 +658,20 @@ export default function CalibrationForm({
               )}
             </FormField>
             <FormField label={t("waterSource")}>
-              <input
-                readOnly
-                value={
-                  selectedEngine?.fields["Sumber Air"] ?? selectedEngine?.group ?? ""
+              <select
+                value={form.waterSource}
+                onChange={(event) =>
+                  handleWaterSourceChange(event.target.value)
                 }
-                className={`${inputClassName} bg-gray-50 dark:bg-gray-800`}
-              />
+                className={inputClassName}
+              >
+                <option value="">{t("waterSource")}</option>
+                {waterSources.map((waterSource) => (
+                  <option key={waterSource} value={waterSource}>
+                    {waterSource}
+                  </option>
+                ))}
+              </select>
             </FormField>
             <FormField label={t("sourceLocation")} optional={t("optional")}>
               <input

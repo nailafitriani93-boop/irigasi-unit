@@ -303,6 +303,13 @@
     display: none;
     -webkit-appearance: none;
   }
+
+  input[type="date"].calibration-date-input::-webkit-calendar-picker-indicator {
+    display: block;
+    opacity: 1;
+    -webkit-appearance: auto;
+    cursor: pointer;
+  }
 }
 
 /* third-party libraries CSS */
