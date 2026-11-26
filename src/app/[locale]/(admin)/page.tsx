@@ -4245,6 +4245,7 @@ export default function DashboardPage() {
               Terakhir diperbarui: {formatDashboardUpdate(dashboardUpdates.pipes)}
             </span>
           }
+          className="2xl:col-span-2"
         >
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
