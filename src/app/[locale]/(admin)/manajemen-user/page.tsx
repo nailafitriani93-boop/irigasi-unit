@@ -3,6 +3,7 @@
 
 import Image from "next/image";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { useRouter } from "@/i18n/navigation";
 import {
   DEFAULT_ROLES,
   DEFAULT_USERS,
@@ -104,6 +105,7 @@ function createId(prefix: string) {
 }
 
 export default function ManajemenUserPage() {
+  const router = useRouter();
   const data = JSON.parse(
     useSyncExternalStore(
       subscribeToManagedData,
@@ -467,16 +469,43 @@ export default function ManajemenUserPage() {
     }
   };
 
-  const setActiveUser = (user: ManagedUser) => {
-    window.localStorage.setItem(
-      CURRENT_USER_STORAGE_KEY,
-      JSON.stringify(user)
-    );
+  const setActiveUser = async (user: ManagedUser) => {
+    try {
+      const response = await fetch("/api/users/active-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id }),
+      });
+      const result: unknown = await response.json();
 
-    window.dispatchEvent(new Event("ggf-user-updated"));
+      if (
+        !response.ok ||
+        !result ||
+        typeof result !== "object" ||
+        !("success" in result) ||
+        result.success !== true
+      ) {
+        const message =
+          result &&
+          typeof result === "object" &&
+          "message" in result &&
+          typeof result.message === "string"
+            ? result.message
+            : "Gagal mengganti user aktif.";
+        throw new Error(message);
+      }
 
-    logActivity("Mengaktifkan profil", user.username);
-    flash(`Profil aktif diganti ke ${user.name}.`);
+      window.localStorage.setItem(
+        CURRENT_USER_STORAGE_KEY,
+        JSON.stringify(user)
+      );
+      window.dispatchEvent(new Event("ggf-user-updated"));
+      logActivity("Mengaktifkan profil", user.username);
+      flash(`Profil aktif diganti ke ${user.name}.`);
+      router.replace("/");
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Gagal mengganti user aktif.");
+    }
   };
 
   const cancelRoleEdit = () => {

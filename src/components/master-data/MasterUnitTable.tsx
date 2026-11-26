@@ -8,7 +8,6 @@ import {
   Cog,
   Database,
   Droplets,
-  Eye,
   Plus,
   Search,
 } from "lucide-react";
@@ -101,6 +100,23 @@ function getSheet(record: EquipmentRecord): EquipmentSheet | null {
     record.sheet === "PipaIrigasi"
     ? record.sheet
     : null;
+}
+
+function getFieldValue(record: EquipmentRecord | undefined, fieldName: string) {
+  return (
+    Object.entries(record?.fields ?? {}).find(
+      ([field]) => field.trim() === fieldName,
+    )?.[1] ?? ""
+  );
+}
+
+function normalizeTankCapacity(value: string | undefined) {
+  if (!value) return "";
+
+  const numericValue = Number(value.replace(/,/g, ""));
+  return Number.isFinite(numericValue)
+    ? String(Math.round(numericValue))
+    : value.replace(/,/g, "");
 }
 
 function getStatusClassName(status: string) {
@@ -415,8 +431,17 @@ export default function MasterUnitTable() {
     if (!sheet) return;
     setActiveRecord(record);
     setActiveSheet(sheet);
-    setDraftFields({ ...record.fields });
-    setFormMode(sheet === "PipaIrigasi" ? "view" : "edit");
+    setDraftFields({
+      ...record.fields,
+      ...(sheet === "EngineIrigasi"
+        ? {
+            "Kapasitas Tanki": normalizeTankCapacity(
+              record.fields["Kapasitas Tanki"],
+            ),
+          }
+        : {}),
+    });
+    setFormMode("edit");
     setFormError("");
   };
 
@@ -487,7 +512,27 @@ export default function MasterUnitTable() {
     }
   };
 
-  const formFields = Object.entries(draftFields);
+  const pipeEditableFields = [
+    ["Good", draftFields.Good === undefined ? "Good (D)" : "Good"],
+    [
+      "Average",
+      draftFields.Average === undefined ? "Average (E)" : "Average",
+    ],
+    ["Poor", draftFields.Poor === undefined ? "Poor (F)" : "Poor"],
+    ["Reject", draftFields.Reject === undefined ? "Reject (G)" : "Reject"],
+  ] as const;
+  const formFields =
+    activeRecord?.sheet === "PipaIrigasi"
+      ? pipeEditableFields.map(([label, key]) => [
+          label,
+          draftFields[key],
+          key,
+        ] as const)
+      : Object.entries(draftFields).map(([field, value]) => [
+          field,
+          value,
+          field,
+        ] as const);
   const selectedSheet = activeSheet;
   const sheetLabel =
     selectedSheet === "EngineIrigasi"
@@ -659,23 +704,11 @@ export default function MasterUnitTable() {
                       <button
                         type="button"
                         onClick={() => openDetails(record)}
-                        aria-label={
-                          record.sheet === "PipaIrigasi"
-                            ? t("details")
-                            : t("edit")
-                        }
-                        title={
-                          record.sheet === "PipaIrigasi"
-                            ? t("details")
-                            : t("edit")
-                        }
+                        aria-label={t("edit")}
+                        title={t("edit")}
                         className="shrink-0 rounded-lg border border-success-200 bg-white px-3 py-1.5 text-xs font-semibold text-success-700 shadow-theme-xs transition-colors hover:border-success-400 hover:bg-success-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-success-600 dark:border-gray-700 dark:bg-gray-900 dark:text-success-400 dark:hover:border-success-700 dark:hover:bg-gray-800"
                       >
-                        {record.sheet === "PipaIrigasi" ? (
-                          <Eye size={15} aria-hidden="true" />
-                        ) : (
-                          t("edit")
-                        )}
+                        {t("edit")}
                       </button>
                     </div>
                     <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
@@ -686,7 +719,12 @@ export default function MasterUnitTable() {
                             ["Tahun Perolehan", record.fields["Tahun Perolehan"]],
                             ["Sumber Air", record.fields["Sumber Air"]],
                             ["Kalibrasi", record.fields.Kalibrasi],
-                            ["Kapasitas Tanki", record.fields["Kapasitas Tanki"]],
+                            [
+                              "Kapasitas Tanki",
+                              normalizeTankCapacity(
+                                record.fields["Kapasitas Tanki"],
+                              ),
+                            ],
                             ["Grade", record.fields.Grade],
                           ].map(([label, value]) => (
                             <div key={label} className="min-w-0">
@@ -764,7 +802,7 @@ export default function MasterUnitTable() {
                     {(isEngineView
                       ? ["11%", "11%", "10%", "11%", "8%", "11%", "8%", "11%", "8%", "11%"]
                       : isIrrigatorView
-                        ? ["20%", "15%", "12%", "17%", "14%", "9%", "13%"]
+                        ? ["16%", "14%", "12%", "15%", "13%", "8%", "8%", "14%"]
                         : ["12%", "16%", "8%", "7%", "7%", "7%", "7%", "12%", "11%", "13%"]
                     ).map((width, index) => (
                         <col key={index} style={{ width }} />
@@ -776,7 +814,7 @@ export default function MasterUnitTable() {
                     {(isEngineView
                       ? ["Tipe Engine", "Kode Engine", "Tahun Perolehan", "Sumber Air", "Area", "Kondisi Engine", "Kalibrasi", "Kapasitas Tanki", "Grade", t("actions")]
                       : isIrrigatorView
-                        ? ["Tipe Irigator", "Tahun Perolehan", t("area"), "Kondisi Irigator", "Panjang PE", "Grade", t("actions")]
+                        ? ["Tipe Irigator", "Kode Irigator", "Tahun Perolehan", t("area"), "Kondisi Irigator", "Panjang PE", "Grade", t("actions")]
                         : isPipeView
                           ? ["Area", "Jenis Pipa", "UoM", "Good", "Average", "Poor", "Reject", "Grand Total", "Good-Average", t("actions")]
                           : [t("code"), t("type"), t("group"), t("area"), t("status"), t("note"), t("actions")]
@@ -814,12 +852,13 @@ export default function MasterUnitTable() {
                           </span>
                         </td>
                         <td className="break-words px-1.5 py-2 text-gray-600 dark:text-gray-300">{record.fields.Kalibrasi || "-"}</td>
-                        <td className="break-words px-1.5 py-2 text-gray-600 dark:text-gray-300">{record.fields["Kapasitas Tanki"] || "-"}</td>
+                        <td className="break-words px-1.5 py-2 text-gray-600 dark:text-gray-300">{normalizeTankCapacity(record.fields["Kapasitas Tanki"]) || "-"}</td>
                         <td className="break-words px-1.5 py-2 text-gray-600 dark:text-gray-300">{record.fields.Grade || "-"}</td>
                       </>
                       ) : isIrrigatorView ? (
                       <>
                         <td className="break-words px-1.5 py-2 text-gray-700 dark:text-gray-300">{record.fields["Tipe Irigator"] || "-"}</td>
+                        <td className="break-words px-1.5 py-2 font-semibold text-gray-900 dark:text-white">{record.code || "-"}</td>
                         <td className="break-words px-1.5 py-2 text-gray-600 dark:text-gray-300">{record.fields["Tahun Perolehan"] || "-"}</td>
                         <td className="break-words px-1.5 py-2 text-gray-600 dark:text-gray-300">{record.area || "-"}</td>
                         <td className="break-words px-1.5 py-2">
@@ -864,25 +903,13 @@ export default function MasterUnitTable() {
                         <button
                           type="button"
                           onClick={() => openDetails(record)}
-                          aria-label={
-                            record.sheet === "PipaIrigasi"
-                              ? t("details")
-                              : t("edit")
-                          }
-                          title={
-                            record.sheet === "PipaIrigasi"
-                              ? t("details")
-                              : t("edit")
-                          }
+                          aria-label={t("edit")}
+                          title={t("edit")}
                         className={`rounded-lg border border-success-200 bg-white font-semibold text-success-700 shadow-theme-xs transition-colors hover:border-success-400 hover:bg-success-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-success-600 dark:border-gray-700 dark:bg-gray-900 dark:text-success-400 dark:hover:border-success-700 dark:hover:bg-gray-800 ${
                           isSpecificSheetView || isPipeView ? "px-1.5 py-1 text-[9px]" : "px-3 py-1.5"
                         }`}
                         >
-                          {record.sheet === "PipaIrigasi" ? (
-                            <Eye size={14} aria-hidden="true" />
-                          ) : (
-                            t("edit")
-                          )}
+                          {t("edit")}
                         </button>
                       </td>
                     </tr>
@@ -939,7 +966,6 @@ export default function MasterUnitTable() {
                   options={[
                     { value: "EngineIrigasi", label: t("engine") },
                     { value: "IrigatorIrigasi", label: t("irrigator") },
-                    { value: "PipaIrigasi", label: t("pipe") },
                   ]}
                   disabled={false}
                   className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-900 outline-none transition focus:border-success-500 focus:ring-2 focus:ring-success-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
@@ -959,9 +985,10 @@ export default function MasterUnitTable() {
             )}
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {formFields.map(([field, value]) => {
+              {formFields.map(([field, value, fieldKey]) => {
                 const isArea = field === "Area";
                 const isCalibration = field.trim() === "Kalibrasi";
+                const isTankCapacity = field.trim() === "Kapasitas Tanki";
                 const isNormality =
                   activeSheet === "EngineIrigasi" &&
                   ["HM", "RPM", "Thermal indicator"].includes(field.trim());
@@ -1091,9 +1118,11 @@ export default function MasterUnitTable() {
                           );
                           setDraftFields((previous) => ({
                             ...previous,
-                            [field]: selectedCode,
-                            "Tipe Engine":
-                              selectedEngine?.fields["Tipe Engine"] ?? "",
+                            [fieldKey]: selectedCode,
+                            "Tipe Engine": getFieldValue(
+                              selectedEngine,
+                              "Tipe Engine",
+                            ),
                           }));
                         }}
                       />
@@ -1121,9 +1150,12 @@ export default function MasterUnitTable() {
                           );
                           setDraftFields((previous) => ({
                             ...previous,
-                            [field]: selectedCode,
+                            [fieldKey]: selectedCode,
                             "Tipe Irigator":
-                              selectedIrrigator?.fields["Tipe Irigator"] ?? "",
+                              getFieldValue(
+                                selectedIrrigator,
+                                "Tipe Irigator",
+                              ) || selectedIrrigator?.group || "",
                           }));
                         }}
                       />
@@ -1138,19 +1170,24 @@ export default function MasterUnitTable() {
                         onChange={(selectedValue) =>
                           setDraftFields((previous) => ({
                             ...previous,
-                            [field]: selectedValue,
+                            [fieldKey]: selectedValue,
                           }))
                         }
                       />
                     ) : (
                       <input
-                        type="text"
-                        value={value ?? ""}
+                        type={isTankCapacity ? "number" : "text"}
+                        step={isTankCapacity ? 1 : undefined}
+                        value={
+                          isTankCapacity
+                            ? normalizeTankCapacity(value)
+                            : value ?? ""
+                        }
                         readOnly={!isEditing || isCalibration}
                         onChange={(event) =>
                           setDraftFields((previous) => ({
                             ...previous,
-                            [field]: event.target.value,
+                            [fieldKey]: event.target.value,
                           }))
                         }
                         className={inputClassName}
@@ -1181,15 +1218,13 @@ export default function MasterUnitTable() {
                 >
                   {t("close")}
                 </button>
-                {activeSheet !== "PipaIrigasi" && (
-                  <button
-                    type="button"
-                    onClick={() => setFormMode("edit")}
-                    className="h-10 rounded-lg bg-success-700 px-4 text-sm font-semibold text-white shadow-theme-xs transition hover:bg-success-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-success-600"
-                  >
-                    {t("edit")}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setFormMode("edit")}
+                  className="h-10 rounded-lg bg-success-700 px-4 text-sm font-semibold text-white shadow-theme-xs transition hover:bg-success-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-success-600"
+                >
+                  {t("edit")}
+                </button>
               </>
             ) : (
               <>

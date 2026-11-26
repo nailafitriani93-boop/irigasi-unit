@@ -3473,8 +3473,8 @@ export default function DashboardPage() {
 
         const equipmentUrl =
           selectedDatasetYear === null
-            ? "/api/irrigation-equipment"
-            : `/api/irrigation-equipment?year=${selectedDatasetYear}`;
+            ? "/api/irrigation-equipment?includeAllAreas=true"
+            : `/api/irrigation-equipment?year=${selectedDatasetYear}&includeAllAreas=true`;
         const response = await fetch(equipmentUrl, { cache: "no-store" });
         const result = (await response.json()) as EquipmentRecord[] | { error?: string };
         if (!response.ok) {

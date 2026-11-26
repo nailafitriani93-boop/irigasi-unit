@@ -319,6 +319,11 @@ async function selectEquipmentById(
 export async function GET(request: Request) {
   try {
     const access = await getAuthenticatedAreaScope();
+    const includeAllAreas =
+      new URL(request.url).searchParams.get("includeAllAreas") === "true";
+    const responseAreaScope = includeAllAreas
+      ? null
+      : access?.areaScope ?? null;
 
     const rawYear = new URL(request.url).searchParams.get("year");
     const requestedYear = rawYear === null ? undefined : Number(rawYear);
@@ -348,7 +353,7 @@ export async function GET(request: Request) {
       );
     }
     if (!snapshot) {
-      return areaScopedEquipmentResponse([], access?.areaScope ?? null);
+      return areaScopedEquipmentResponse([], responseAreaScope);
     }
     if (snapshot && !snapshot.is_active) {
       return areaScopedEquipmentResponse(
@@ -356,7 +361,7 @@ export async function GET(request: Request) {
           ...equipmentRecordsFromSnapshot(snapshot, "PG1"),
           ...pipeRecordsFromWorkbook(snapshot.workbook_data),
         ],
-        access?.areaScope ?? null,
+        responseAreaScope,
       );
     }
 
@@ -381,7 +386,7 @@ export async function GET(request: Request) {
 
     return areaScopedEquipmentResponse(
       [...equipmentRecords, ...pipeRecords],
-      access?.areaScope ?? null,
+      responseAreaScope,
     );
   } catch (error) {
     console.error("GET /api/irrigation-equipment:", error);
