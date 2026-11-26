@@ -8,6 +8,7 @@ import {
   Fuel,
   Menu,
   Ban,
+  Waves,
   type LucideIcon,
 } from "lucide-react";
 import { Link, usePathname } from "@/i18n/navigation";
@@ -20,6 +21,12 @@ const categories: {
   available?: boolean;
   href?: "/" | "https://audit5ririgasi.estatepg1.online/";
 }[] = [
+  {
+    label: "Realisasi Irigasi",
+    Icon: Waves,
+    active: false,
+    description: "Pengaturan realisasi irigasi sedang dibuat.",
+  },
   { label: "Inventarisasi Unit", Icon: Cog, active: true, href: "/" },
   {
     label: "Early Warning",

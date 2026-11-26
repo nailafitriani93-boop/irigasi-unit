@@ -253,9 +253,11 @@ export function applyCalibrationStatusFromWorkbook(
           ...record,
           fields: {
             ...record.fields,
-            Kalibrasi: calibratedEngineCodes.has(record.code.trim().toUpperCase())
-              ? "Sudah"
-              : "Belum",
+            Kalibrasi:
+              calibratedEngineCodes.has(record.code.trim().toUpperCase()) ||
+              record.fields.Kalibrasi?.trim().toLowerCase() === "sudah"
+                ? "Sudah"
+                : "Belum",
           },
         }
       : record,

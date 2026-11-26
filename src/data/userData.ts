@@ -69,7 +69,6 @@ export const USER_ACCESS_PAGES = [
   { id: "dashboard", label: "Dashboard" },
   { id: "manajemen-user", label: "Kelola User" },
   { id: "kalibrasi", label: "Kalibrasi Engine" },
-  { id: "master-data", label: "Master Data" },
   { id: "master-unit", label: "Master Unit" },
 ] as const;
 

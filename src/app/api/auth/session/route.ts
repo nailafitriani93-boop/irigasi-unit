@@ -3,8 +3,8 @@ import { NextResponse } from "next/server";
 import { getAuthSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
-  getAreaScopeForUsername,
-  getDisplayNameForUsername,
+  getLegacyDisplayNameForUsername,
+  isAreaScope,
 } from "@/lib/areaAccess";
 
 export const runtime = "nodejs";
@@ -54,13 +54,15 @@ export async function GET() {
 
     const userResult = await db.query<{
       username: string;
+      name: string;
+      area_scope: unknown;
       role_id: string;
       role_name: string | null;
       access_pages: string[] | null;
       gender: string;
     }>(
-      `SELECT u.username, u.role_id, r.name AS role_name,
-              u.access_pages, u.gender
+      `SELECT u.username, u.name, u.area_scope, u.role_id,
+              r.name AS role_name, u.access_pages, u.gender
        FROM public.managed_users u
        LEFT JOIN public.user_roles r ON r.id = u.role_id
        WHERE u.id = $1 AND u.status = 'Aktif'
@@ -68,8 +70,12 @@ export async function GET() {
       [session.userId],
     );
     const user = userResult.rows[0];
-    const areaScope = getAreaScopeForUsername(user?.username);
-    const displayName = getDisplayNameForUsername(user?.username);
+    const areaScope = isAreaScope(user?.area_scope)
+      ? user.area_scope
+      : null;
+    const displayName =
+      getLegacyDisplayNameForUsername(user?.username) ??
+      (typeof user?.name === "string" ? user.name.trim() : "");
 
     if (!user || !areaScope || !displayName) {
       return NextResponse.json(

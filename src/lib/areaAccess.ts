@@ -9,10 +9,10 @@ const VALID_AREA_SCOPES: AreaScope[] = [
   "Divisi 2",
 ];
 
-const USERNAME_AREA_SCOPES: Record<string, AreaScope> = {
-  "100001": "PG1",
-  "100002": "PG1",
-  "100003": "PG1",
+const LEGACY_DISPLAY_NAMES: Record<string, string> = {
+  "100001": "Admin",
+  "100002": "Abdul Haris Siregar",
+  "100003": "Arnum",
   "11101": "PG1",
   "11102": "Lakop",
   "11103": "Kijung",
@@ -27,25 +27,12 @@ const USERNAME_AREA_SCOPES: Record<string, AreaScope> = {
   "11115": "Divisi 2",
 };
 
-export function getAreaScopeForUsername(
-  username: unknown,
-): AreaScope | null {
-  if (typeof username !== "string") return null;
-
-  return USERNAME_AREA_SCOPES[username.trim().toLowerCase()] ?? null;
-}
-
-export function getDisplayNameForUsername(
+export function getLegacyDisplayNameForUsername(
   username: unknown,
 ): string | null {
   if (typeof username !== "string") return null;
 
-  const normalizedUsername = username.trim().toLowerCase();
-  if (normalizedUsername === "100001") return "Admin";
-  if (normalizedUsername === "100002") return "Abdul Haris Siregar";
-  if (normalizedUsername === "100003") return "Arnum";
-
-  return getAreaScopeForUsername(normalizedUsername);
+  return LEGACY_DISPLAY_NAMES[username.trim().toLowerCase()] ?? null;
 }
 
 export async function getAuthenticatedAreaScope() {
@@ -53,9 +40,9 @@ export async function getAuthenticatedAreaScope() {
   if (!session) return null;
 
   const result = await db.query<{
-    username: string;
+    area_scope: unknown;
   }>(
-    `SELECT u.username
+    `SELECT u.area_scope
      FROM public.managed_users u
      WHERE u.id = $1 AND u.status = 'Aktif'
      LIMIT 1`,
@@ -63,8 +50,8 @@ export async function getAuthenticatedAreaScope() {
   );
   if (!result.rows.length) return null;
 
-  const areaScope = getAreaScopeForUsername(result.rows[0].username);
-  if (!areaScope) return null;
+  const areaScope = result.rows[0].area_scope;
+  if (!isAreaScope(areaScope)) return null;
 
   return { session, areaScope };
 }

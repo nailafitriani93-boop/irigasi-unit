@@ -17,6 +17,7 @@ import {
   equipmentRecordsFromSnapshot,
   getMasterDataSnapshot,
 } from "@/lib/masterData";
+import type { ParsedExcelWorkbook } from "@/data/xlsxLite";
 import type { PoolClient } from "pg";
 
 export const runtime = "nodejs";
@@ -59,7 +60,10 @@ function parseRecord(value: unknown): EquipmentRecord | null {
       ? "Engine"
       : record.sheet === "IrigatorIrigasi"
         ? "Irrigator"
-        : null;
+        : record.sheet === "PipaIrigasi"
+          ? "Pipa"
+          : null;
+  const fields = record.fields;
 
   if (
     !expectedType ||
@@ -67,20 +71,24 @@ function parseRecord(value: unknown): EquipmentRecord | null {
     !Number.isSafeInteger(record.row) ||
     Number(record.row) < 1 ||
     typeof record.code !== "string" ||
-    !record.code.trim() ||
+    (expectedType !== "Pipa" && !record.code.trim()) ||
     typeof record.group !== "string" ||
     typeof record.area !== "string" ||
     !isAreaScope(record.area) ||
     record.area === "PG1" ||
     typeof record.status !== "string" ||
     typeof record.note !== "string" ||
-    !record.fields ||
-    typeof record.fields !== "object" ||
-    Array.isArray(record.fields) ||
-    !Object.values(record.fields).every(
+    !fields ||
+    typeof fields !== "object" ||
+    Array.isArray(fields) ||
+    !Object.values(fields).every(
       (field) =>
         field === undefined || typeof field === "string",
-    )
+    ) ||
+    (expectedType === "Pipa" &&
+      (typeof fields["Jenis Pipa"] !== "string" ||
+        !fields["Jenis Pipa"].trim() ||
+        fields.Area !== record.area))
   ) {
     return null;
   }
@@ -88,8 +96,210 @@ function parseRecord(value: unknown): EquipmentRecord | null {
   return record as EquipmentRecord;
 }
 
+function pipeRecordsFromWorkbook(
+  workbook: ParsedExcelWorkbook,
+): EquipmentRecord[] {
+  const sheet = workbook.PipaIrigasi;
+  if (!sheet) return [];
+
+  const headers = Object.entries(sheet.cells)
+    .map(([address, value]) => {
+      const match = address.match(/^([A-Z]+)1$/);
+      return match
+        ? { column: match[1], label: String(value).trim() }
+        : null;
+    })
+    .filter(
+      (header): header is { column: string; label: string } =>
+        header !== null && Boolean(header.label),
+    );
+  const labelCounts = new Map<string, number>();
+  headers.forEach(({ label }) =>
+    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1),
+  );
+
+  return sheet.rows
+    .filter(
+      ({ values }) =>
+        isAreaScope(values.Area) &&
+        values.Area !== "PG1" &&
+        Boolean(values["Jenis Pipa"]?.trim()),
+    )
+    .map(({ rowNumber, values }) => {
+      const fields: Record<string, string> = {};
+      headers.forEach(({ column, label }) => {
+        const key =
+          (labelCounts.get(label) ?? 0) > 1
+            ? `${label} (${column})`
+            : label;
+        fields[key] = String(sheet.cells[`${column}${rowNumber}`] ?? "");
+      });
+
+      return {
+        sheet: "PipaIrigasi",
+        type: "Pipa",
+        row: rowNumber,
+        code: values["Jenis Pipa"] ?? "",
+        group: values.UoM ?? "",
+        area: values.Area ?? "",
+        status: "",
+        note: "",
+        fields,
+      };
+    });
+}
+
+async function ensurePipeTableExists() {
+  const result = await db.query<{ table_name: string | null }>(`
+    SELECT to_regclass('public.irrigation_equipment')::text AS table_name
+  `);
+  if (!result.rows[0]?.table_name) {
+    throw new Error("Tabel public.irrigation_equipment tidak ditemukan.");
+  }
+}
+
+async function getStoredPipeRecords(): Promise<EquipmentRecord[]> {
+  await ensurePipeTableExists();
+  const result = await db.query<{
+    sheet: string;
+    row_number: number;
+    type: string;
+    code: string;
+    group_name: string;
+    area: string;
+    status: string;
+    note: string;
+    fields: Record<string, string | undefined>;
+  }>(`
+    SELECT
+      sheet,
+      row_number,
+      type,
+      code,
+      group_name,
+      area,
+      status,
+      note,
+      fields
+    FROM public.irrigation_equipment
+    WHERE sheet = 'PipaIrigasi'
+    ORDER BY row_number
+  `);
+
+  return result.rows.map((row) => ({
+    sheet: row.sheet,
+    type: row.type,
+    row: row.row_number,
+    code: row.code,
+    group: row.group_name,
+    area: row.area,
+    status: row.status,
+    note: row.note,
+    fields: row.fields ?? {},
+  }));
+}
+
+function mergePipeRecords(
+  datasetRecords: EquipmentRecord[],
+  storedRecords: EquipmentRecord[],
+) {
+  const recordsByRow = new Map(
+    datasetRecords.map((record) => [record.row, record]),
+  );
+  storedRecords.forEach((record) => recordsByRow.set(record.row, record));
+  return [...recordsByRow.values()].sort((first, second) => first.row - second.row);
+}
+
+async function savePipeRecord(
+  client: PoolClient,
+  record: EquipmentRecord,
+  areaScope: string,
+): Promise<EquipmentRecord | null> {
+  const result = await client.query<{
+    sheet: string;
+    row_number: number;
+    type: string;
+    code: string;
+    group_name: string;
+    area: string;
+    status: string;
+    note: string;
+    fields: Record<string, string | undefined>;
+  }>(
+    `
+      INSERT INTO public.irrigation_equipment
+        (sheet, row_number, type, code, group_name, area, status, note, fields, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, NOW())
+      ON CONFLICT (sheet, row_number)
+      DO UPDATE SET
+        type = EXCLUDED.type,
+        code = EXCLUDED.code,
+        group_name = EXCLUDED.group_name,
+        area = EXCLUDED.area,
+        status = EXCLUDED.status,
+        note = EXCLUDED.note,
+        fields = EXCLUDED.fields,
+        updated_at = NOW()
+      WHERE $10 = 'PG1' OR public.irrigation_equipment.area = $10
+      RETURNING
+        sheet,
+        row_number,
+        type,
+        code,
+        group_name,
+        area,
+        status,
+        note,
+        fields
+    `,
+    [
+      record.sheet,
+      record.row,
+      record.type,
+      record.code,
+      record.group,
+      record.area,
+      record.status,
+      record.note,
+      JSON.stringify(record.fields),
+      areaScope,
+    ],
+  );
+
+  const saved = result.rows[0];
+  return saved
+    ? {
+        sheet: saved.sheet,
+        type: saved.type,
+        row: saved.row_number,
+        code: saved.code,
+        group: saved.group_name,
+        area: saved.area,
+        status: saved.status,
+        note: saved.note,
+        fields: saved.fields ?? {},
+      }
+    : null;
+}
+
 function canManageArea(area: string, areaScope: string) {
   return areaScope === "PG1" || area === areaScope;
+}
+
+function areaScopedEquipmentResponse(
+  records: EquipmentRecord[],
+  areaScope: string | null,
+) {
+  const scopedRecords =
+    areaScope && areaScope !== "PG1"
+      ? records.filter((record) => record.area === areaScope)
+      : records;
+  const headers: Record<string, string> = {
+    "Cache-Control": "no-store",
+  };
+  if (areaScope) headers["X-Area-Scope"] = areaScope;
+
+  return NextResponse.json(scopedRecords, { headers });
 }
 
 async function selectEquipmentById(
@@ -138,14 +348,15 @@ export async function GET(request: Request) {
       );
     }
     if (!snapshot) {
-      return NextResponse.json([], {
-        headers: { "Cache-Control": "no-store" },
-      });
+      return areaScopedEquipmentResponse([], access?.areaScope ?? null);
     }
     if (snapshot && !snapshot.is_active) {
-      return NextResponse.json(
-        equipmentRecordsFromSnapshot(snapshot, "PG1"),
-        { headers: { "Cache-Control": "no-store" } },
+      return areaScopedEquipmentResponse(
+        [
+          ...equipmentRecordsFromSnapshot(snapshot, "PG1"),
+          ...pipeRecordsFromWorkbook(snapshot.workbook_data),
+        ],
+        access?.areaScope ?? null,
       );
     }
 
@@ -154,15 +365,23 @@ export async function GET(request: Request) {
       `${equipmentSelect}
        ORDER BY e.source_sheet, e.source_row`,
     );
+    const equipmentRecords = snapshot
+      ? applyCalibrationStatusFromWorkbook(
+          result.rows.map(toEquipmentRecord),
+          snapshot.workbook_data,
+        )
+      : result.rows.map(toEquipmentRecord);
+    const datasetPipeRecords = snapshot
+      ? pipeRecordsFromWorkbook(snapshot.workbook_data)
+      : [];
+    const pipeRecords = mergePipeRecords(
+      datasetPipeRecords,
+      await getStoredPipeRecords(),
+    );
 
-    return NextResponse.json(
-      snapshot
-        ? applyCalibrationStatusFromWorkbook(
-            result.rows.map(toEquipmentRecord),
-            snapshot.workbook_data,
-          )
-        : result.rows.map(toEquipmentRecord),
-      { headers: { "Cache-Control": "no-store" } },
+    return areaScopedEquipmentResponse(
+      [...equipmentRecords, ...pipeRecords],
+      access?.areaScope ?? null,
     );
   } catch (error) {
     console.error("GET /api/irrigation-equipment:", error);
@@ -199,6 +418,56 @@ export async function POST(request: Request) {
         { error: "Aset berada di luar cakupan area akun." },
         { status: 403 },
       );
+    }
+
+    if (requestedRecord.sheet === "PipaIrigasi") {
+      await ensurePipeTableExists();
+      const snapshot = await getMasterDataSnapshot();
+      const datasetMaxRow = Math.max(
+        0,
+        ...pipeRecordsFromWorkbook(snapshot?.workbook_data ?? {}).map(
+          (record) => record.row,
+        ),
+      );
+      const client = await db.connect();
+
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock($1)",
+          [827341923],
+        );
+        const latestRow = await client.query<{ row_number: number }>(
+          `
+            SELECT COALESCE(MAX(row_number), 0) AS row_number
+            FROM public.irrigation_equipment
+            WHERE sheet = 'PipaIrigasi'
+          `,
+        );
+        const record = {
+          ...requestedRecord,
+          row: Math.max(datasetMaxRow, Number(latestRow.rows[0].row_number)) + 1,
+          code: requestedRecord.fields["Jenis Pipa"] ?? "",
+          group: requestedRecord.fields.UoM ?? "",
+        };
+        const saved = await savePipeRecord(client, record, access.areaScope);
+
+        if (!saved) {
+          await client.query("ROLLBACK");
+          return NextResponse.json(
+            { error: "Data Pipa tidak dapat disimpan di luar cakupan area akun." },
+            { status: 403 },
+          );
+        }
+
+        await client.query("COMMIT");
+        return NextResponse.json(saved, { status: 201 });
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     }
 
     await ensureIrrigationEquipmentSeeded();
@@ -290,6 +559,63 @@ export async function PUT(request: Request) {
         { error: "Aset berada di luar cakupan area akun." },
         { status: 403 },
       );
+    }
+
+    if (record.sheet === "PipaIrigasi") {
+      await ensurePipeTableExists();
+      const snapshot = await getMasterDataSnapshot();
+      const client = await db.connect();
+
+      try {
+        await client.query("BEGIN");
+        const stored = await client.query<{ area: string }>(
+          `
+            SELECT area
+            FROM public.irrigation_equipment
+            WHERE sheet = 'PipaIrigasi' AND row_number = $1
+            FOR UPDATE
+          `,
+          [record.row],
+        );
+        const existingArea =
+          stored.rows[0]?.area ??
+          pipeRecordsFromWorkbook(snapshot?.workbook_data ?? {}).find(
+            (pipeRecord) => pipeRecord.row === record.row,
+          )?.area;
+
+        if (!existingArea) {
+          await client.query("ROLLBACK");
+          return NextResponse.json(
+            { error: "Data Pipa tidak ditemukan." },
+            { status: 404 },
+          );
+        }
+        if (!canManageArea(existingArea, access.areaScope)) {
+          await client.query("ROLLBACK");
+          return NextResponse.json(
+            { error: "Pipa berada di luar cakupan area akun." },
+            { status: 403 },
+          );
+        }
+
+        const saved = await savePipeRecord(client, record, access.areaScope);
+
+        if (!saved) {
+          await client.query("ROLLBACK");
+          return NextResponse.json(
+            { error: "Data Pipa tidak ditemukan atau di luar cakupan area akun." },
+            { status: 404 },
+          );
+        }
+
+        await client.query("COMMIT");
+        return NextResponse.json(saved);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     }
 
     const client = await db.connect();

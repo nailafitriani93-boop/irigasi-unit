@@ -996,6 +996,8 @@
     "repair": "Perbaikan",
     "borrowed": "Dipinjam",
     "fada": "FADA",
+    "normal": "Normal",
+    "notNormal": "Tidak Normal",
     "loading": "Memuat data unit...",
     "loadError": "Gagal memuat data unit.",
     "empty": "Tidak ada unit yang sesuai filter.",
@@ -1008,6 +1010,23 @@
     "area": "Area",
     "status": "Kondisi",
     "note": "Keterangan",
-    "sheet": "Sheet"
+    "sheet": "Sheet",
+    "actions": "Aksi",
+    "details": "Detail",
+    "edit": "Edit",
+    "addUnit": "Tambah Unit",
+    "addDescription": "Masukkan data awal unit sesuai jenisnya.",
+    "engine": "Engine",
+    "irrigator": "Irigator",
+    "pipe": "Pipa",
+    "selectArea": "Pilih area",
+    "requiredCode": "Kode unit wajib diisi.",
+    "requiredArea": "Pilih area yang valid.",
+    "requiredPipeType": "Jenis pipa wajib diisi.",
+    "save": "Simpan",
+    "saving": "Menyimpan...",
+    "saveError": "Gagal menyimpan data unit.",
+    "close": "Tutup",
+    "cancel": "Batal"
   }
 }

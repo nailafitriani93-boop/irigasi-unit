@@ -18,6 +18,7 @@ import {
   ClipboardCheck,
   Cog,
   Droplets,
+  Eye,
 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import DashboardSectionNav from "@/components/dashboard/DashboardSectionNav";
@@ -713,8 +714,8 @@ function DataTable({
   onValueClick?: (row: CellValue[], header: string, headers: string[]) => void;
 }) {
   return (
-    <div className={`w-full ${readinessStyle ? "overflow-hidden" : "overflow-x-auto"} rounded-none border border-[#e5ebe7]`}>
-      <table className={`w-full border-collapse text-left ${pipeHeader ? "min-w-0 table-fixed text-[8px]" : readinessStyle ? "table-fixed text-[10px]" : dense ? "min-w-0 table-fixed text-[9px]" : `${columnWidths ? "min-w-[560px] table-fixed" : "min-w-[470px]"} text-[12px] sm:text-[13px]`}`}>
+    <div className={`w-full ${readinessStyle || pipeHeader ? "overflow-hidden" : "overflow-x-auto"} rounded-none border border-[#e5ebe7]`}>
+      <table className={`w-full border-collapse text-left ${pipeHeader ? "min-w-0 table-fixed text-[9px]" : readinessStyle ? "table-fixed text-[10px]" : dense ? "min-w-0 table-fixed text-[9px]" : `${columnWidths ? "min-w-[560px] table-fixed" : "min-w-[470px]"} text-[12px] sm:text-[13px]`}`}>
         {(readinessStyle || columnWidths) && (
           <colgroup>
             {headers.map((_, index) => (
@@ -743,7 +744,7 @@ function DataTable({
                       ? { backgroundColor: capabilityChartHeaderColor(header) }
                     : undefined
                 }
-                className={`${pipeHeader ? "px-0.5 py-1 text-[8px] leading-tight" : readinessStyle ? "px-1 py-1.5 text-[8px] leading-tight tracking-normal" : dense ? "px-1 py-1" : compact ? "px-2.5 py-2.5" : "px-3 py-2.5"} ${pipeHeader ? "whitespace-nowrap" : readinessStyle ? readinessCentered ? "whitespace-normal break-words" : "whitespace-nowrap" : dense ? "whitespace-normal break-words" : wrapColumns.includes(index) ? "whitespace-normal" : "whitespace-nowrap"} ${!pipeHeader && (wrapColumns.includes(index) || dense) ? "break-words" : ""} border-b ${pipeHeader ? "font-bold" : "font-semibold"} ${calibrationStyle ? "text-center" : readinessStyle ? readinessCentered ? "text-center" : readinessLeftAligned || index === 0 ? "text-left" : "text-right" : pipeHeader ? "text-center" : leftAlignedColumns.includes(index) || index === 0 ? "text-left" : "text-right"} ${readinessStyle ? `border-gray-200 uppercase dark:border-gray-700 ${blueFirstColumn && index === 0 ? "!bg-blue-700 !text-white" : calibrationStyle ? calibrationHeaderStyle(header, index) : index ? readinessStatusStyle(header).header : ""}` : pipeHeader ? `border-white/20 ${pipeHeaderStyle(header)}` : greenHeader ? "border-white/20 text-white" : "border-[#dce9df]"}`}
+                className={`${pipeHeader ? "px-0.5 py-1 text-[9px] leading-tight" : readinessStyle ? "px-1 py-1.5 text-[8px] leading-tight tracking-normal" : dense ? "px-1 py-1" : compact ? "px-2.5 py-2.5" : "px-3 py-2.5"} ${pipeHeader ? "whitespace-normal break-words" : readinessStyle ? readinessCentered ? "whitespace-normal break-words" : "whitespace-nowrap" : dense ? "whitespace-normal break-words" : wrapColumns.includes(index) ? "whitespace-normal" : "whitespace-nowrap"} ${!pipeHeader && (wrapColumns.includes(index) || dense) ? "break-words" : ""} border-b ${pipeHeader ? "font-normal" : "font-semibold"} ${calibrationStyle ? "text-center" : readinessStyle ? readinessCentered ? "text-center" : readinessLeftAligned || index === 0 ? "text-left" : "text-right" : pipeHeader ? "text-center" : leftAlignedColumns.includes(index) || index === 0 ? "text-left" : "text-right"} ${readinessStyle ? `border-gray-200 uppercase dark:border-gray-700 ${blueFirstColumn && index === 0 ? "!bg-blue-700 !text-white" : calibrationStyle ? calibrationHeaderStyle(header, index) : index ? readinessStatusStyle(header).header : ""}` : pipeHeader ? `border-white/20 ${pipeHeaderStyle(header)}` : greenHeader ? "border-white/20 text-white" : "border-[#dce9df]"}`}
               >
                 {greenHeader && index ? (
                   <span className="inline-flex items-center justify-end gap-1.5">
@@ -814,7 +815,7 @@ function DataTable({
                   <td
                     key={`${rowIndex}-${colIndex}`}
                     rowSpan={rowSpan}
-                    className={`${pipeHeader ? "px-0.5 py-1" : readinessStyle ? "px-1 py-1 text-[10px] leading-tight" : dense ? "px-1 py-1" : compact ? "px-2.5 py-2" : "px-3 py-2.5"} ${pipeHeader ? "whitespace-nowrap" : readinessStyle || dense || wrapColumns.includes(colIndex) ? "whitespace-normal" : "whitespace-nowrap"} ${!pipeHeader && (dense || wrapColumns.includes(colIndex)) ? "break-words" : ""} ${calibrationStyle ? "text-center" : readinessStyle ? readinessCentered ? "text-center" : readinessLeftAligned || colIndex === 0 ? "text-left font-medium" : "text-right" : pipeHeader ? "text-center" : leftAlignedColumns.includes(colIndex) || colIndex === 0 ? "text-left font-medium" : "text-right"} ${readinessStyle && (readinessCentered || colIndex === 0) ? "font-medium" : ""} ${colIndex ? "tabular-nums" : ""} ${readinessStyle ? "!bg-white !text-black dark:!bg-white dark:!text-black" : ""} ${pipeHeader ? "font-bold !text-black" : ""}`}
+                    className={`${pipeHeader ? "px-0.5 py-1" : readinessStyle ? "px-1 py-1 text-[10px] leading-tight" : dense ? "px-1 py-1" : compact ? "px-2.5 py-2" : "px-3 py-2.5"} ${pipeHeader ? "whitespace-normal break-words" : readinessStyle || dense || wrapColumns.includes(colIndex) ? "whitespace-normal" : "whitespace-nowrap"} ${!pipeHeader && (dense || wrapColumns.includes(colIndex)) ? "break-words" : ""} ${calibrationStyle ? "text-center" : readinessStyle ? readinessCentered ? "text-center" : readinessLeftAligned || colIndex === 0 ? "text-left font-medium" : "text-right" : pipeHeader ? "text-center" : leftAlignedColumns.includes(colIndex) || colIndex === 0 ? "text-left font-medium" : "text-right"} ${readinessStyle && (readinessCentered || colIndex === 0) ? "font-medium" : ""} ${colIndex ? "tabular-nums" : ""} ${readinessStyle ? "!bg-white !text-black dark:!bg-white dark:!text-black" : ""} ${pipeHeader ? "font-normal !text-black" : ""}`}
                   >
                     {readinessStyle && colIndex === 0 ? (
                       <span className={`inline-flex max-w-full items-center ${calibrationStyle || readinessCentered ? "justify-center text-center" : "justify-start text-start"} break-words ${isTotal ? "font-semibold text-gray-800 dark:text-gray-100" : ""}`}>
@@ -1769,6 +1770,7 @@ function EquipmentDetailTable({
 }) {
   const calibrationT = useTranslations("calibration");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewingRecord, setViewingRecord] = useState<EquipmentRecord | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -2107,22 +2109,12 @@ function EquipmentDetailTable({
                         <div className="flex gap-2">
                           <button
                             type="button"
-                            onClick={() => {
-                              setEditNotice("");
-                              setEditingId(id);
-                              setDraft({
-                                ...Object.fromEntries(
-                                  Object.entries(record.fields).map(([key, value]) => [
-                                    key,
-                                    value ?? "",
-                                  ])
-                                ),
-                                Keterangan: record.note,
-                              });
-                            }}
+                            onClick={() => setViewingRecord(record)}
+                            aria-label={`Lihat detail data ${record.code}`}
+                            title="Lihat detail data"
                             className="rounded-lg border border-[#dce9df] px-2.5 py-1.5 font-semibold text-[#08783b] hover:bg-[#f2f8f3] dark:border-gray-600 dark:text-green-300 dark:hover:bg-gray-700"
                           >
-                            Edit
+                            <Eye size={16} aria-hidden="true" />
                           </button>
                           {!hideAssetActions && <button
                             type="button"
@@ -2632,6 +2624,39 @@ function EquipmentDetailTable({
             ? "Tidak ada aset yang cocok dengan pencarian."
             : "Tidak ada data aset untuk status ini pada sheet terkait."}
         </div>
+      )}
+      {viewingRecord && (
+        <Modal
+            isOpen
+            onClose={() => setViewingRecord(null)}
+            className="my-4 w-[calc(100%-1.5rem)] max-w-3xl overflow-hidden rounded-3xl border border-[#dce9df] shadow-2xl sm:my-6 sm:w-[calc(100%-3rem)]"
+        >
+            <div className="max-h-[88vh] overflow-y-auto bg-white dark:bg-gray-900">
+              <div className="border-b border-[#e5ebe7] bg-gradient-to-r from-[#f0f8f2] to-white px-5 py-5 dark:border-gray-700 dark:from-gray-800 dark:to-gray-900 sm:px-7">
+                <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#07813e]">
+                  Detail data unit
+                </p>
+                <h4 className="mt-1 text-lg font-bold text-[#183b2b] dark:text-white">
+                  {viewingRecord.code}
+                </h4>
+              </div>
+              <dl className="grid grid-cols-1 gap-3 p-5 sm:grid-cols-2 sm:p-7">
+                {Object.entries(viewingRecord.fields).map(([field, value]) => (
+                  <div
+                    key={field}
+                    className="rounded-xl border border-[#e5ebe7] bg-[#fcfdfc] px-3 py-2.5 dark:border-gray-700 dark:bg-gray-800"
+                  >
+                    <dt className="text-xs font-medium text-[#718078] dark:text-gray-400">
+                      {field}
+                    </dt>
+                    <dd className="mt-1 text-sm text-[#183b2b] dark:text-gray-100">
+                      {value?.trim() || "—"}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+        </Modal>
       )}
     </div>
   );

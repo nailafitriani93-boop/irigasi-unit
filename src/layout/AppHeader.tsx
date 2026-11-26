@@ -28,7 +28,6 @@ function isCalibrationStatusRecord(
 
 const AppHeader: React.FC = () => {
   const pathname = usePathname();
-  const masterDataT = useTranslations("masterData");
   const masterUnitT = useTranslations("masterUnit");
 
   const [allowedPages, setAllowedPages] = useState<string[]>([]);
@@ -194,15 +193,6 @@ const AppHeader: React.FC = () => {
   const items = isInitialized
     ? [
         ...allItems.filter((item) => allowedPages.includes(item.access)),
-        ...(allowedPages.includes("master-data")
-          ? [
-              {
-                href: "/master-data" as const,
-                label: masterDataT("nav"),
-                access: "master-data",
-              },
-            ]
-          : []),
         ...(isLoggedIn && allowedPages.includes("master-unit")
           ? [{ href: "/master-unit" as const, label: masterUnitT("nav"), access: "master-unit" }]
           : []),

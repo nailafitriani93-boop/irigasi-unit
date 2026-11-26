@@ -9,7 +9,6 @@ import { usePathname, useRouter } from "@/i18n/navigation";
 const ROUTE_ACCESS: Record<string, string> = {
   "/": "dashboard",
   "/kalibrasi": "kalibrasi",
-  "/master-data": "master-data",
   "/master-unit": "master-unit",
   "/inspeksi": "dashboard",
   "/manajemen-user": "manajemen-user",

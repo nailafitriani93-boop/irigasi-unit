@@ -2,8 +2,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
-  getAreaScopeForUsername,
-  getDisplayNameForUsername,
+  getLegacyDisplayNameForUsername,
+  isAreaScope,
 } from "@/lib/areaAccess";
 import {
   createSessionToken,
@@ -31,7 +31,8 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await db.query(
-      `SELECT id, username, gender, role_id, status, password_hash
+      `SELECT id, name, username, gender, role_id, status,
+              area_scope, password_hash
        FROM public.managed_users
        WHERE username = $1
        LIMIT 1`,
@@ -39,8 +40,12 @@ export async function POST(request: NextRequest) {
     );
 
     const user = result.rows[0];
-    const areaScope = getAreaScopeForUsername(user?.username);
-    const displayName = getDisplayNameForUsername(user?.username);
+    const areaScope = isAreaScope(user?.area_scope)
+      ? user.area_scope
+      : null;
+    const displayName =
+      getLegacyDisplayNameForUsername(user?.username) ??
+      (typeof user?.name === "string" ? user.name.trim() : "");
 
     if (
       !user ||

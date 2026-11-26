@@ -54,8 +54,8 @@ Saat diminta oleh `\password`, masukkan password acak dari langkah di atas dua k
 
 ```bash
 mkdir -p /var/www
-git clone --branch main https://github.com/nailafitriani93-boop/irigasi-unit.git /var/www/irigasi-unit
-cd /var/www/irigasi-unit
+git clone --branch main https://github.com/nailafitriani93-boop/irigasi-unit.git /var/www/irigasi-dashboard
+cd /var/www/irigasi-dashboard
 ```
 
 Jika repository GitHub bersifat private dan `git clone` ditolak, hentikan langkah ini dan siapkan akses GitHub yang aman. Jangan menaruh token/password di URL clone atau mengirimkannya lewat chat.
@@ -184,7 +184,7 @@ Buka `https://unitirigasi.estatepg1.online` di browser dan masuk menggunakan aku
 Setelah perubahan baru masuk ke branch `main` GitHub:
 
 ```bash
-cd /var/www/irigasi-unit
+cd /var/www/irigasi-dashboard
 git pull --ff-only origin main
 npm ci
 npm run build
